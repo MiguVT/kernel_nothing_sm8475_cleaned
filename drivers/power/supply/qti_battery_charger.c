@@ -3976,6 +3976,81 @@ static ssize_t wls_cfg_push_store(struct class *c,
 }
 static CLASS_ATTR_WO(wls_cfg_push);
 #endif
+#if defined(NT_CHG_WIRE) && defined(NT_CHG)
+static ssize_t charging_en_show(struct class *c, struct class_attribute *attr,
+				char *buf)
+{
+	struct battery_chg_dev *bcdev = container_of(c, struct battery_chg_dev,
+						battery_class);
+	struct psy_state *pst_usb = &bcdev->psy_list[PSY_TYPE_USB];
+	struct psy_state *pst_wls = &bcdev->psy_list[PSY_TYPE_WLS];
+	bool usb_enabled = false, wls_enabled = false;
+	int rc;
+
+	rc = read_property_id(bcdev, pst_usb, USB_CHARGE_ENABLE);
+	if (rc < 0)
+		return rc;
+	usb_enabled = !!pst_usb->prop[USB_CHARGE_ENABLE];
+
+	if (!bcdev->wls_not_supported) {
+		rc = read_property_id(bcdev, pst_wls, WLS_EN);
+		if (rc < 0)
+			return rc;
+		wls_enabled = !!pst_wls->prop[WLS_EN];
+	}
+
+	// Both should be in the same state, if not it indicates an error
+	if (usb_enabled != wls_enabled && !bcdev->wls_not_supported) {
+		pr_warn("Inconsistent charging states: USB=%d, WLS=%d\n",
+			usb_enabled, wls_enabled);
+	}
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", usb_enabled);
+}
+
+static ssize_t charging_en_store(struct class *c,
+					struct class_attribute *attr,
+					const char *buf, size_t count)
+{
+	struct battery_chg_dev *bcdev = container_of(c, struct battery_chg_dev,
+						battery_class);
+	int rc;
+	bool val;
+
+	if (kstrtobool(buf, &val))
+		return -EINVAL;
+
+	// First disable/enable USB charging
+	rc = write_property_id(bcdev, &bcdev->psy_list[PSY_TYPE_USB],
+				USB_CHARGE_ENABLE, val);
+	if (rc < 0) {
+		pr_err("Failed to %s USB charging, rc=%d\n",
+			val ? "enable" : "disable", rc);
+		goto exit;
+	}
+
+	// Then disable/enable wireless charging
+	if (!bcdev->wls_not_supported) {
+		rc = write_property_id(bcdev, &bcdev->psy_list[PSY_TYPE_WLS],
+					WLS_EN, val);
+		if (rc < 0) {
+			pr_err("Failed to %s wireless charging, rc=%d\n",
+				val ? "enable" : "disable", rc);
+			// Revert USB charging state on wireless charging failure
+			write_property_id(bcdev, &bcdev->psy_list[PSY_TYPE_USB],
+					USB_CHARGE_ENABLE, !val);
+			goto exit;
+		}
+	}
+
+	pr_info("Charging %s for both USB and wireless\n",
+		val ? "enabled" : "disabled");
+
+exit:
+	return rc < 0 ? rc : count;
+}
+static CLASS_ATTR_RW(charging_en);
+#endif
 static struct attribute *battery_class_attrs[] = {
 	&class_attr_soh.attr,
 #ifdef NT_CHG
@@ -4023,6 +4098,9 @@ static struct attribute *battery_class_attrs[] = {
 	&class_attr_wls_cp_reg.attr,
 	&class_attr_wls_cp_data.attr,
 	&class_attr_wls_op_mode.attr,
+#endif
+#if defined(NT_CHG_WIRE) && defined(NT_CHG)
+        &class_attr_charging_en.attr,
 #endif
 	NULL,
 };
