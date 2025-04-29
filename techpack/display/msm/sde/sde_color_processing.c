@@ -1655,7 +1655,7 @@ bool sde_is_fod_pressed(struct drm_crtc *crtc)
 	return (!!cstate->fod_pressed || !!dsi_panel_get_force_fod_ui(display->panel) || !!cstate->fod_dim_layer);
 }
 
-bool skip_pcc;
+bool skip_color_invert;
 static void _sde_cp_crtc_commit_feature(struct sde_cp_node *prop_node,
 				   struct sde_crtc *sde_crtc)
 {
@@ -1706,19 +1706,12 @@ static void _sde_cp_crtc_commit_feature(struct sde_cp_node *prop_node,
 		        if (sde_is_fod_pressed(&sde_crtc->base)) {
 				hw_cfg.payload = NULL;
 				hw_cfg.len = 0;
-				skip_pcc = true;
+				skip_color_invert = true;
 			} else {
-			        skip_pcc = false;
+			        skip_color_invert = false;
 			}
 		} else {
 		        sde_crtc_state->color_invert_on = false;
-		        if (sde_crtc_state->fod_pressed) {
-                                hw_cfg.payload = NULL;
-	            		hw_cfg.len = 0;
-	            		skip_pcc = true;
-		        } else {
-		                skip_pcc = false;
-		        }
 		}
 	}
 
