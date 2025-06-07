@@ -137,12 +137,15 @@ function choices() {
             if [ $(ls $KERNEL_DIR/KernelSU-Next 2>/dev/null | wc -l) -eq 0 ]; then
                 rm -rf $KERNEL_DIR/KernelSU-Next
                 git submodule update --init --recursive KernelSU-Next
-            else
-            	ZIPNAME=Meteoric-KernelSU-Next
-            	KSU_CONFIG=ksu.config
-            	if [ $(grep -c "KSU" arch/arm64/configs/$DEFCONFIG) -eq 0 ]; then
-                    sed -i "s/-Meteoric/-Meteoric-$VERSION-KSU-Next/" arch/arm64/configs/$DEFCONFIG
-            	fi
+            fi
+            if [ $(ls $KERNEL_DIR/susfs4ksu 2>/dev/null | wc -l) -eq 0 ]; then
+                rm -rf $KERNEL_DIR/susfs4ksu
+                git submodule update --init --recursive susfs4ksu
+            fi
+            ZIPNAME=Meteoric-KernelSU-Next
+            KSU_CONFIG=ksu.config
+            if [ $(grep -c "KSU" arch/arm64/configs/$DEFCONFIG) -eq 0 ]; then
+                sed -i "s/-Meteoric/-Meteoric-$VERSION-KSU-Next/" arch/arm64/configs/$DEFCONFIG
             fi
             ;;
          *)
