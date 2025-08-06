@@ -1,0 +1,66 @@
+name: Build Meteoric Kernel with KernelSU
+
+on:
+  workflow_dispatch:
+    inputs:
+      ZIPNAME:
+        description: 'Zip/Release name (e.g. Meteoric-KernelSU-Next)'
+        required: true
+        default: 'Meteoric-Migu-Next'
+      VERSION:
+        description: 'Version (e.g. 1.0.0)'
+        required: true
+        default: '1.0.0'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    env:
+      ZIPNAME: ${{ github.event.inputs.ZIPNAME }}
+      VERSION: ${{ github.event.inputs.VERSION }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout repository (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential cpio curl flex git kmod libssl-dev libncurses5-dev libelf-dev python3 python3-pip zip zstd jq
+
+      - name: Patch build.sh for non-interactive mode (KernelSU always ON)
+        run: |
+          sed -i 's/read -p "Include KernelSU-Next\?.*/KSU_RESP=Y/' build.sh
+          sed -i 's/read -p "Do you want to do a clean build\?.*/CLEAN_RESP=N/' build.sh
+          sed -i 's/read -p "Do you want to do a github release\?.*/GIT_RESP=Y/' build.sh
+          sed -i 's/read -p "Do you want to upload files to the current github release\?.*/UPLOAD_RESP=N/' build.sh
+
+      - name: Set version and zip name from inputs
+        run: |
+          echo "${{ env.VERSION }}" > Version
+          sed -i "s/^ZIPNAME=.*/ZIPNAME=${{ env.ZIPNAME }}/" build.sh
+
+      - name: Make build.sh executable
+        run: chmod +x build.sh
+
+      - name: Build the kernel
+        run: ./build.sh
+
+      - name: Find the generated ZIP
+        id: findzip
+        run: |
+          ZIP_FILE=$(ls out/${{ env.ZIPNAME }}-${{ env.VERSION }}-*.zip | head -n 1)
+          echo "zip_file=$ZIP_FILE" >> $GITHUB_OUTPUT
+
+      - name: Create release and upload ZIP
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.VERSION }}
+          name: ${{ env.ZIPNAME }} ${{ env.VERSION }}
+          files: ${{ steps.findzip.outputs.zip_file }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
