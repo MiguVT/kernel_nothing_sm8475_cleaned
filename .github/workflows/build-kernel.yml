@@ -26,7 +26,7 @@ jobs:
     - name: Setup build environment
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential bc bison flex libssl-dev libelf-dev git wget curl zstd
+        sudo apt-get install -y build-essential bc bison flex libssl-dev libelf-dev git wget curl zstd lld
 
     - name: Setup KernelSU-Next
       run: |
@@ -92,12 +92,19 @@ jobs:
         export KBUILD_BUILD_HOST=GitHub-Actions
         export KBUILD_BUILD_USER=ci-builder
         export PROCS=$(nproc)
+        export LD=ld.lld
 
         echo "Starting kernel compilation..."
-        make -j$PROCS O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+
+        make -j$PROCS O=out ARCH=arm64 \
+             LLVM=1 LLVM_IAS=1 \
              CLANG_TRIPLE=aarch64-linux-gnu- \
              CROSS_COMPILE=aarch64-linux-android- \
-             STRIP=llvm-strip 2>&1 | tee out/build.log
+             CROSS_COMPILE_COMPAT=arm-linux-androideabi- \
+             AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump \
+             STRIP=llvm-strip LD=ld.lld \
+             CC=clang \
+             2>&1 | tee out/build.log
 
         if [ ! -f out/arch/arm64/boot/Image ]; then
           echo "Kernel compilation failed!"
