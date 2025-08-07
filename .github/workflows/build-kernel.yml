@@ -26,7 +26,19 @@ jobs:
     - name: Setup build environment
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential bc bison flex libssl-dev libelf-dev git wget curl zstd lld
+        sudo apt-get install -y \
+          bc \
+          git \
+          curl \
+          libncurses-dev \
+          bison \
+          flex \
+          libssl-dev \
+          libelf-dev \
+          clang \
+          lld \
+          llvm \
+          zstd
 
     - name: Setup KernelSU-Next
       run: |
