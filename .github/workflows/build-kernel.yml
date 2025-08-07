@@ -75,7 +75,10 @@ jobs:
         echo "~/toolchain/neutron-clang/bin" >> $GITHUB_PATH
 
     - name: Configure and Optimize Kernel
-      run: ./.github/scripts/configure_kernel.sh
+      run: |
+        chmod +x .github/scripts/configure_kernel.sh
+        ./.github/scripts/configure_kernel.sh
+
 
     - name: Build kernel
       run: |
