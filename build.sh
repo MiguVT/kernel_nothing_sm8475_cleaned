@@ -130,22 +130,10 @@ function choices() {
     echo    "                BUILDING KERNEL                "
     echo -e "***********************************************$nocol"
 
-    # KernelSU-Next
-    read -p "Include KernelSU-Next? If unsure, say N. (Y/N) " KSU_RESP 
+    # KernelSU
+    read -p "Include KernelSU? If unsure, say N. (Y/N) " KSU_RESP 
     case $KSU_RESP in
         [yY] )
-            if [ $(ls $KERNEL_DIR/KernelSU-Next 2>/dev/null | wc -l) -eq 0 ]; then
-                rm -rf $KERNEL_DIR/KernelSU-Next
-                git submodule update --init --recursive KernelSU-Next
-            fi
-            if [ $(ls $KERNEL_DIR/susfs4ksu 2>/dev/null | wc -l) -eq 0 ]; then
-                rm -rf $KERNEL_DIR/susfs4ksu
-                git submodule update --init --recursive susfs4ksu
-            fi
-            ZIPNAME=Meteoric-KernelSU-Next
-            KSU_CONFIG=ksu.config
-            if [ $(grep -c "KSU" arch/arm64/configs/$DEFCONFIG) -eq 0 ]; then
-                sed -i "s/-Meteoric/-Meteoric-$VERSION-KSU-Next/" arch/arm64/configs/$DEFCONFIG
             fi
             ;;
          *)
@@ -166,7 +154,7 @@ function choices() {
     # Interrupt detected
     if [ $SIGINT_DETECT -eq 1 ]; then
         if [ $(grep -c "KSU" arch/arm64/configs/$DEFCONFIG) -ne 0 ]; then
-            sed -i "s/-Meteoric-$VERSION-KSU-Next/-Meteoric/" arch/arm64/configs/$DEFCONFIG
+            sed -i "s/-Meteoric-$VERSION-KSU/-Meteoric/" arch/arm64/configs/$DEFCONFIG
         elif [ $(grep -c $VERSION arch/arm64/configs/$DEFCONFIG) -ne 0 ]; then
             sed -i "s/-Meteoric-$VERSION/-Meteoric/" arch/arm64/configs/$DEFCONFIG
         fi
@@ -193,16 +181,16 @@ function compile() {
     STRIP=llvm-strip \
     V=$VERBOSE 2>&1 | tee out/error.log
 
-    # KernelSU-Next
-    if [ $ZIPNAME = Meteoric-KernelSU-Next ]; then
-        sed -i 's/CONFIG_INCLUDE_KSU=y/# CONFIG_INCLUDE_KSU is not set/g' out/.config
-        sed -i '/CONFIG_INCLUDE_KSU=y/d' out/defconfig
-        sed -i "s/-Meteoric-$VERSION-KSU-Next/-Meteoric/" out/defconfig out/.config arch/arm64/configs/$DEFCONFIG
+    # KernelSU
+    if [ $ZIPNAME = Meteoric-KernelSU ]; then
+        sed -i 's/CONFIG_KSU=y/# CONFIG_KSU is not set/g' out/.config
+        sed -i '/CONFIG_KSU=y/d' out/defconfig
+        sed -i "s/-Meteoric-$VERSION-KSU/-Meteoric/" out/defconfig out/.config arch/arm64/configs/$DEFCONFIG
         
         if [ $(grep -c "# KernelSU" arch/arm64/configs/$DEFCONFIG) -eq 1 ]; then
-            sed -i 's/CONFIG_INCLUDE_KSU=y/# CONFIG_INCLUDE_KSU is not set/g' arch/arm64/configs/$DEFCONFIG
+            sed -i 's/CONFIG_KSU=y/# CONFIG_KSU is not set/g' arch/arm64/configs/$DEFCONFIG
         else   
-            sed -i '/CONFIG_INCLUDE_KSU=y/d' arch/arm64/configs/$DEFCONFIG
+            sed -i '/CONFIG_KSU=y/d' arch/arm64/configs/$DEFCONFIG
         fi
     else
         sed -i "s/-Meteoric-$VERSION/-Meteoric/" out/defconfig out/.config arch/arm64/configs/$DEFCONFIG

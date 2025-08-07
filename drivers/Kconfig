@@ -242,11 +242,4 @@ source "drivers/nothing_stability/Kconfig"
 
 source "drivers/nothing_thermal/Kconfig"
 
-config INCLUDE_KSU
-        bool "Ship KernelSU with kernel"
-
-if INCLUDE_KSU
-source "drivers/kernelsu/Kconfig"
-endif
-
 endmenu
