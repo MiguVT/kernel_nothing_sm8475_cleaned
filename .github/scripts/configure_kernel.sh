@@ -16,7 +16,7 @@ cat > ksu_ci.config << 'EOF'
 # Base integration
 CONFIG_KSU=y
 CONFIG_KSU_SUSFS=y
-CONFIG_KSU_SUSFS_MODULE=y
+CONFIG_KSU_SUSFS_MODULE=m
 CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
 
 # Scheduler & performance
