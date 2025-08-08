@@ -53,11 +53,16 @@ CONFIG_UBSAN=n
 CONFIG_KASAN=n
 EOF
 
-# 2. Merge non-interactively and resolve dependencies
-scripts/kconfig/merge_config.sh "${BASE_DEFCONFIG}" "${FRAGMENT}" > "${OUTDIR}/.config"
-make -C "${OUTDIR}" olddefconfig
+# 2. Start with base defconfig
+make O="${OUTDIR}" ARCH=arm64 "${BASE_DEFCONFIG}"
 
-# 3. Cleanup
+# 3. Merge fragment using proper method
+./scripts/kconfig/merge_config.sh -m -O "${OUTDIR}" "${BASE_DEFCONFIG}" "${FRAGMENT}"
+
+# 4. Resolve dependencies with correct make command
+make O="${OUTDIR}" ARCH=arm64 olddefconfig
+
+# 5. Cleanup
 rm -f "${FRAGMENT}"
 
 echo "✅ out/.config ready: optimized minimal overrides applied."
