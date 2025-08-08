@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Paths
-BASE_DEFCONFIG="arch/arm64/configs/vendor/meteoric_defconfig"
-FRAGMENT="ksu_ci.config"
-OUTDIR="out"
+export ARCH=arm64 SUBARCH=arm64
+export KBUILD_BUILD_HOST=GitHub-Actions
+export KBUILD_BUILD_USER=ci-builder
 
-mkdir -p "${OUTDIR}"
+make -j1 O=out clean mrproper
+make -j1 O=out ARCH=arm64 vendor/meteoric_defconfig
 
-# 1. Write minimal override fragment
-cat > "${FRAGMENT}" << 'EOF'
+cat > ksu_ci.config << 'EOF'
 #
 # ksu_ci.config – minimal overrides for Meteoric Kernel v6 (SM8475)
 #
@@ -74,16 +73,5 @@ CONFIG_UBSAN=n
 CONFIG_KASAN=n
 EOF
 
-# 2. Start with base defconfig
-make O="${OUTDIR}" ARCH=arm64 vendor/meteoric_defconfig
-
-# 3. Merge fragment using proper method
-./scripts/kconfig/merge_config.sh -m -O "${OUTDIR}" "${BASE_DEFCONFIG}" "${FRAGMENT}"
-
-# 4. Resolve dependencies with correct make command
-make O="${OUTDIR}" ARCH=arm64 olddefconfig
-
-# 5. Cleanup
-rm -f "${FRAGMENT}"
-
-echo "✅ out/.config ready: optimized minimal overrides applied."
+make -j1 O=out CC=clang ARCH=arm64 vendor/meteoric_defconfig ksu_ci.config savedefconfig
+rm -f ksu_ci.config
