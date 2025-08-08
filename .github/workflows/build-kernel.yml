@@ -68,16 +68,11 @@ jobs:
 
     - name: Setup toolchain
       run: |
-        echo "Setting up optimized Neutron toolchain..."
+        echo "Setting up Neutron toolchain..."
         mkdir -p ~/toolchain/neutron-clang
         cd ~/toolchain/neutron-clang
         curl -sL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman -o antman
         chmod +x antman && ./antman -S
-
-        # Verify toolchain
-        ~/toolchain/neutron-clang/bin/clang --version
-        ~/toolchain/neutron-clang/bin/ld.lld --version
-
         echo "~/toolchain/neutron-clang/bin" >> $GITHUB_PATH
 
     - name: Configure and Optimize Kernel
@@ -85,122 +80,34 @@ jobs:
         chmod +x .github/scripts/configure_kernel.sh
         ./.github/scripts/configure_kernel.sh
 
-    - name: Build Kernel (GitHub Pro Optimized)
+
+    - name: Build kernel
       run: |
         export ARCH=arm64
         export SUBARCH=arm64
-        export KBUILD_BUILD_HOST=GitHub-Actions-Pro-Optimized
-        export KBUILD_BUILD_USER=meteoric-pro-builder
+        export KBUILD_BUILD_HOST=GitHub-Actions
+        export KBUILD_BUILD_USER=ci-builder
         export PROCS=$(nproc)
         export LD=ld.lld
-        
-        # GitHub Pro optimized flags (leveraging enhanced resources)
-        export KCFLAGS="-O2 -march=armv8.2-a+crypto+fp16 -mtune=cortex-a78 -flto=thin -fno-strict-aliasing"
-        export KCPPFLAGS="-DCONFIG_LOCALVERSION_AUTO=n -DNDEBUG -DCONFIG_OPTIMIZE_FOR_PERFORMANCE=y"
-        export KBUILD_CFLAGS_MODULE="-O2 -flto=thin"
-        export LDFLAGS="-Wl,--build-id=sha1 -Wl,--gc-sections"
-        
-        # Pro runner resource optimization
-        export CCACHE_DISABLE=1
-        export KBUILD_BUILD_TIMESTAMP="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-        export LLVM_PARALLEL_LINK_JOBS=4  # Leverage Pro runner cores
-        export KBUILD_BUILD_VERSION=1
-        
-        echo "🚀 GitHub Pro Optimized Build - Nothing Phone 2 Meteoric Kernel"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo "💎 Runner Type: GitHub Actions Pro (Enhanced Performance)"
-        echo "📱 Target Device: Nothing Phone 2 (SM8475 Snapdragon 8+ Gen 1)" 
-        echo "🔧 Optimization Level: Maximum Pro Runner Performance"
-        echo "⚡ CPU Cores Available: $PROCS threads (Pro Enhanced)"
-        echo "🧠 Memory: 16GB+ (vs 7GB Free tier)"
-        echo "📦 Features: KernelSU-Next + SUSFS + Pro Optimizations"
-        echo "🏗️  Build Host: $KBUILD_BUILD_HOST"
-        echo "📅 Build Started: $(date)"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        
-        # Display Pro runner capabilities
-        echo "📊 Pro Runner Resources:"
-        echo "  CPU Info: $(nproc) cores available"
-        echo "  Memory: $(free -h | grep Mem | awk '{print $2}') total"
-        echo "  Storage: NVMe SSD with enhanced I/O"
-        echo "  Priority: High (vs Low on Free tier)"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        
-        # Pro-optimized parallel compilation
-        time make -j$PROCS O=out ARCH=arm64 \
+
+        echo "Starting kernel compilation..."
+
+        make -j$PROCS O=out ARCH=arm64 \
              LLVM=1 LLVM_IAS=1 \
              CLANG_TRIPLE=aarch64-linux-gnu- \
              CROSS_COMPILE=aarch64-linux-android- \
              CROSS_COMPILE_COMPAT=arm-linux-androideabi- \
-             AR=llvm-ar \
-             NM=llvm-nm \
-             OBJCOPY=llvm-objcopy \
-             OBJDUMP=llvm-objdump \
-             STRIP=llvm-strip \
-             LD=ld.lld \
+             AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump \
+             STRIP=llvm-strip LD=ld.lld \
              CC=clang \
-             HOSTCC=clang \
-             HOSTCXX=clang++ \
-             KCFLAGS="$KCFLAGS" \
-             KCPPFLAGS="$KCPPFLAGS" \
-             KBUILD_CFLAGS_MODULE="$KBUILD_CFLAGS_MODULE" \
-             LDFLAGS="$LDFLAGS" \
-             LLVM_PARALLEL_LINK_JOBS="$LLVM_PARALLEL_LINK_JOBS" \
-             KBUILD_BUILD_TIMESTAMP="$KBUILD_BUILD_TIMESTAMP" \
              2>&1 | tee out/build.log
-        
-        # Pro-level validation and metrics
+
         if [ ! -f out/arch/arm64/boot/Image ]; then
-          echo "❌ COMPILATION FAILED - Pro Runner Diagnostics"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "🔍 Enhanced Pro Diagnostics:"
-          echo "📋 Build log analysis (last 50 lines):"
-          tail -50 out/build.log
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "🚨 Critical errors:"
-          grep -i "error:" out/build.log | tail -20 || echo "No critical errors found"
-          echo "⚠️  Warnings summary:"
-          grep -i "warning:" out/build.log | wc -l && echo "warnings total"
+          echo "Kernel compilation failed!"
           exit 1
         fi
-        
-        # Pro runner success metrics
-        echo "✅ PRO BUILD SUCCESSFUL - Enhanced Performance Achieved"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo "🏆 GitHub Pro Build Statistics:"
-        echo "📏 Optimized Kernel Size: $(du -h out/arch/arm64/boot/Image | cut -f1)"
-        echo "📅 Build Completed: $(date)"
-        echo "⚡ Parallel Jobs Used: $PROCS (Pro Enhanced)"
-        echo "🎯 Target Architecture: ARM64v8.2-A + Crypto + FP16"
-        echo "🔧 Optimization Features:"
-        echo "   • ThinLTO enabled for maximum performance"
-        echo "   • SM8475 Snapdragon 8+ Gen 1 specific tuning"
-        echo "   • Hardware crypto acceleration"
-        echo "   • Cortex-A78 micro-architecture optimization"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        
-        # Pro-level component verification
-        echo "🔍 Pro Build Verification:"
-        echo "📦 Kernel Components:"
-        ls -lah out/arch/arm64/boot/ | grep -E "(Image|dtb|dtbo)"
-        
-        if [ -f out/arch/arm64/boot/dtbo.img ]; then
-          echo "✅ DTBO Generated: $(du -h out/arch/arm64/boot/dtbo.img | cut -f1)"
-        fi
-        
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo "🚀 GITHUB PRO OPTIMIZED BUILD COMPLETED"
-        echo "💎 Ready for Nothing Phone 2 deployment with enhanced performance"
 
-    - name: Upload build logs on failure
-      if: failure()
-      uses: actions/upload-artifact@v4
-      with:
-        name: build-failure-logs-${{ github.run_number }}
-        path: |
-          out/build.log
-          out/.config
-        retention-days: 7
+        echo "Kernel compiled successfully"
 
     - name: Package kernel
       run: |
@@ -258,12 +165,10 @@ jobs:
           - KernelSU-Next integration for advanced root management
           - SUSFS (SuFS) for comprehensive root hiding at kernel level
           - Compatible with Nothing Phone 2 (SM8475)
-          - Production-optimized for SM8475 Snapdragon 8+ Gen 1
-          - Enhanced build flags for maximum performance
 
           **Installation:**
           1. Flash the provided ZIP file via custom recovery (TWRP/OrangeFox)
-          2. Or extract boot.img and flash via fastboot: `fastboot flash boot boot.img`
+          2. Or extract boot.img and flash via fastboot: `fastboot flash boot boot.img` (Not tested, I (MiguVT) use OrangeFox) 
 
           **KernelSU Manager:**
           - Install KernelSU-Next Manager APK
@@ -272,8 +177,7 @@ jobs:
           **Changelog:**
           - Updated to latest KernelSU-Next
           - Integrated SUSFS patches for enhanced root hiding
-          - Production-ready optimized build configuration
-          - Enhanced build flags for SM8475 architecture
+          - Optimized build configuration
 
         files: |
           kernel_output/*.zip
