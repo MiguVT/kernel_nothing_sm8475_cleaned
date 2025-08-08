@@ -19,169 +19,137 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+    env:
+      ARCH: arm64
+      SUBARCH: arm64
+      KBUILD_BUILD_HOST: GitHub-Actions
+      KBUILD_BUILD_USER: ci-builder
+
     steps:
-    - name: Checkout kernel source
-      uses: actions/checkout@v4
+      - name: Checkout kernel source
+        uses: actions/checkout@v4
 
-    - name: Setup build environment
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          build-essential \
-          bc \
-          git \
-          curl \
-          libncurses-dev \
-          bison \
-          flex \
-          libssl-dev \
-          libelf-dev \
-          clang \
-          lld \
-          llvm \
-          zstd \
-          binutils-aarch64-linux-gnu
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential bc git curl \
+            libncurses-dev bison flex libssl-dev libelf-dev \
+            clang lld llvm zstd binutils-aarch64-linux-gnu
 
-    - name: Setup KernelSU-Next
-      run: |
-        echo "Setting up KernelSU-Next..."
-        curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
+      - name: Setup KernelSU-Next
+        run: |
+          echo "Setting up KernelSU-Next..."
+          curl -fsSL \
+            https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh \
+            | bash -
 
-    - name: Clone and apply SUSFS patches
-      run: |
-        echo "Cloning susfs4ksu repository..."
-        git clone https://gitlab.com/simonpunk/susfs4ksu.git --branch gki-android12-5.10 --depth=1
+      - name: Clone SUSFS and apply patches
+        run: |
+          SUSFS_REPO="https://gitlab.com/simonpunk/susfs4ksu.git"
+          SUSFS_BRANCH="gki-android12-5.10"
+          echo "Cloning susfs4ksu repository..."
+          git clone --depth=1 --branch "$SUSFS_BRANCH" "$SUSFS_REPO" susfs4ksu
 
-        echo "Applying SUSFS kernel patches..."
-        # Apply main kernel patch
-        patch -p1 < susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch
+          echo "Applying SUSFS kernel patches..."
+          patch -p1 < susfs4ksu/kernel_patches/50_add_susfs_in_${SUSFS_BRANCH}.patch
 
-        # Copy SUSFS source files
-        cp -r susfs4ksu/kernel_patches/fs/* fs/
-        cp -r susfs4ksu/kernel_patches/include/linux/* include/linux/
+          cp -r susfs4ksu/kernel_patches/fs     fs/
+          cp -r susfs4ksu/kernel_patches/include/linux include/linux/
 
-        # Install SUSFS module into KernelSU-Next
-        mkdir -p drivers/kernelsu/susfs_module
-        cp -r susfs4ksu/ksu_module_susfs/* drivers/kernelsu/susfs_module/
+          mkdir -p drivers/kernelsu/susfs_module
+          cp -r susfs4ksu/ksu_module_susfs/* drivers/kernelsu/susfs_module/
 
-        echo "SUSFS patches applied successfully"
+      - name: Setup Neutron toolchain
+        run: |
+          NEUTRON_DIR="$HOME/toolchain/neutron-clang"
+          mkdir -p "$NEUTRON_DIR"
+          curl -fsSL \
+            https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman \
+            -o "$NEUTRON_DIR/antman"
+          chmod +x "$NEUTRON_DIR/antman" && "$NEUTRON_DIR/antman" -S
+          echo "$NEUTRON_DIR/bin" >> $GITHUB_PATH
 
-    - name: Setup toolchain
-      run: |
-        echo "Setting up Neutron toolchain..."
-        mkdir -p ~/toolchain/neutron-clang
-        cd ~/toolchain/neutron-clang
-        curl -sL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman -o antman
-        chmod +x antman && ./antman -S
-        echo "~/toolchain/neutron-clang/bin" >> $GITHUB_PATH
+      - name: Configure kernel
+        run: ./.github/scripts/configure_kernel.sh
 
-    - name: Configure and Optimize Kernel
-      run: |
-        chmod +x .github/scripts/configure_kernel.sh
-        ./.github/scripts/configure_kernel.sh
+      - name: Compile kernel
+        run: |
+          PROCS=$(nproc)
+          export PROCS
+          echo "Starting kernel compilation..."
+          make -j"$PROCS" O=out ARCH=$ARCH \
+               LLVM=1 LLVM_IAS=1 \
+               CLANG_TRIPLE=aarch64-linux-gnu- \
+               CROSS_COMPILE=aarch64-linux-android- \
+               CROSS_COMPILE_COMPAT=arm-linux-androideabi- \
+               AR=llvm-ar NM=llvm-nm \
+               OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump \
+               STRIP=llvm-strip LD=ld.lld CC=clang \
+            2>&1 | tee out/build.log
 
+          if [ ! -f out/arch/arm64/boot/Image ]; then
+            echo "Kernel compilation failed!"
+            exit 1
+          fi
 
-    - name: Build kernel
-      run: |
-        export ARCH=arm64
-        export SUBARCH=arm64
-        export KBUILD_BUILD_HOST=GitHub-Actions
-        export KBUILD_BUILD_USER=ci-builder
-        export PROCS=$(nproc)
-        export LD=ld.lld
+      - name: Package kernel artifacts
+        run: |
+          OUT_DIR=kernel_output
+          mkdir -p $OUT_DIR
+          cp out/arch/arm64/boot/Image $OUT_DIR/
+          cp out/arch/arm64/boot/dtb    $OUT_DIR/ 2>/dev/null || true
+          cp out/arch/arm64/boot/dtbo.img $OUT_DIR/ 2>/dev/null || true
 
-        echo "Starting kernel compilation..."
+          ZIP_BASENAME="Meteoric-KernelSU-Next-SUSFS-${{ github.event.inputs.version }}-$(date +%y%m%d-%H%M).zip"
+          if [ -d anykernel ]; then
+            cp out/arch/arm64/boot/Image anykernel/
+            cp out/arch/arm64/boot/dtb anykernel/ 2>/dev/null || true
+            cp out/arch/arm64/boot/dtbo.img anykernel/ 2>/dev/null || true
+            (cd anykernel && zip -r9 "../$OUT_DIR/$ZIP_BASENAME" .)
+          else
+            (cd $OUT_DIR && zip -r9 "$ZIP_BASENAME" Image dtb dtbo.img 2>/dev/null || zip -r9 "$ZIP_BASENAME" Image)
+          fi
+          echo "ZIPNAME=$ZIP_BASENAME" >> $GITHUB_ENV
 
-        make -j$PROCS O=out ARCH=arm64 \
-             LLVM=1 LLVM_IAS=1 \
-             CLANG_TRIPLE=aarch64-linux-gnu- \
-             CROSS_COMPILE=aarch64-linux-android- \
-             CROSS_COMPILE_COMPAT=arm-linux-androideabi- \
-             AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump \
-             STRIP=llvm-strip LD=ld.lld \
-             CC=clang \
-             2>&1 | tee out/build.log
+      - name: Upload artifacts
+        if: ${{ !github.event.inputs.make_draft }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: meteoric-kernelsu-next-susfs-${{ github.event.inputs.version }}
+          path: |
+            kernel_output/*.zip
+            kernel_output/Image
+            kernel_output/dtb
+            kernel_output/dtbo.img
+          retention-days: 30
 
-        if [ ! -f out/arch/arm64/boot/Image ]; then
-          echo "Kernel compilation failed!"
-          exit 1
-        fi
+      - name: Create GitHub Release (draft)
+        if: ${{ github.event.inputs.make_draft }}
+        uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          name: "Meteoric Kernel ${{ github.event.inputs.version }} - KernelSU-Next + SUSFS"
+          body: |
+            ## Meteoric Kernel ${{ github.event.inputs.version }}  
+            **Features:**  
+            - KernelSU-Next integration for advanced root management  
+            - SUSFS for comprehensive root hiding  
+            - Compatible with Nothing Phone 2 (SM8475)  
 
-        echo "Kernel compiled successfully"
+            **Installation:**  
+            1. Flash via custom recovery (TWRP/OrangeFox)  
+            2. Or extract `boot.img` and flash via `fastboot`  
 
-    - name: Package kernel
-      run: |
-        echo "Packaging kernel..."
+            **KernelSU Manager:**  
+            - Install KernelSU-Next Manager APK  
+            - Access SUSFS features via `ksu_susfs` tool  
 
-        # Create output directory
-        mkdir -p kernel_output
-
-        # Copy kernel components
-        cp out/arch/arm64/boot/Image kernel_output/
-        cp out/arch/arm64/boot/dtb kernel_output/ 2>/dev/null || true
-        cp out/arch/arm64/boot/dtbo.img kernel_output/ 2>/dev/null || true
-
-        # Create AnyKernel3 package if available
-        if [ -d "anykernel" ]; then
-          cp out/arch/arm64/boot/Image anykernel/
-          cp out/arch/arm64/boot/dtb anykernel/ 2>/dev/null || true
-          cp out/arch/arm64/boot/dtbo.img anykernel/ 2>/dev/null || true
-
-          cd anykernel
-          ZIPNAME="Meteoric-KernelSU-Next-SUSFS-${{ github.event.inputs.version }}-$(date +%y%m%d-%H%M).zip"
-          zip -r9 "../kernel_output/$ZIPNAME" *
-          cd ..
-          echo "ZIPNAME=$ZIPNAME" >> $GITHUB_ENV
-        else
-          # Create basic zip
-          cd kernel_output
-          ZIPNAME="Meteoric-KernelSU-Next-SUSFS-${{ github.event.inputs.version }}-$(date +%y%m%d-%H%M).zip"
-          zip -r9 "$ZIPNAME" Image dtb dtbo.img 2>/dev/null || zip -r9 "$ZIPNAME" Image
-          echo "ZIPNAME=$ZIPNAME" >> $GITHUB_ENV
-        fi
-
-    - name: Upload artifacts
-      if: ${{ !github.event.inputs.make_draft }}
-      uses: actions/upload-artifact@v4
-      with:
-        name: meteoric-kernelsu-next-susfs-${{ github.event.inputs.version }}
-        path: |
-          kernel_output/*.zip
-          kernel_output/Image
-          kernel_output/dtb
-          kernel_output/dtbo.img
-        retention-days: 30
-
-    - name: Create Release
-      if: ${{ github.event.inputs.make_draft }}
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: ${{ github.event.inputs.version }}
-        name: "Meteoric Kernel ${{ github.event.inputs.version }} - KernelSU-Next + SUSFS"
-        body: |
-          ## Meteoric Kernel ${{ github.event.inputs.version }} - Made by HELLBOY017 | Mod by MiguVT
-
-          **Features:**
-          - KernelSU-Next integration for advanced root management
-          - SUSFS (SuFS) for comprehensive root hiding at kernel level
-          - Compatible with Nothing Phone 2 (SM8475)
-
-          **Installation:**
-          1. Flash the provided ZIP file via custom recovery (TWRP/OrangeFox)
-          2. Or extract boot.img and flash via fastboot: `fastboot flash boot boot.img` (Not tested, I (MiguVT) use OrangeFox) 
-
-          **KernelSU Manager:**
-          - Install KernelSU-Next Manager APK
-          - SUSFS features available through ksu_susfs tool
-
-          **Changelog:**
-          - Updated to latest KernelSU-Next
-          - Integrated SUSFS patches for enhanced root hiding
-          - Optimized build configuration
-
-        files: |
-          kernel_output/*.zip
-        prerelease: false
-        draft: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            **Changelog:**  
+            - Updated to latest KernelSU-Next  
+            - Integrated SUSFS patches  
+            - Optimized build configuration  
+          files: kernel_output/*.zip
+          draft: true
+          prerelease: false
