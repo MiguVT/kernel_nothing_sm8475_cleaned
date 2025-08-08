@@ -45,7 +45,7 @@ jobs:
     - name: Setup KernelSU-Next
       run: |
         echo "Setting up KernelSU-Next..."
-        curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/next-susfs/kernel/setup.sh"
+        curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/next-susfs/kernel/setup.sh" | bash -
 
     - name: Clone and apply SUSFS patches
       run: |
