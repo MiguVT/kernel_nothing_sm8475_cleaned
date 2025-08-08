@@ -1,29 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export ARCH=arm64 SUBARCH=arm64
-export KBUILD_BUILD_HOST=GitHub-Actions
-export KBUILD_BUILD_USER=ci-builder
+# This script merges KSU+SUSFS settings into vendor defconfig
+# and generates an out/.config for the build workflow.
+# hope this work :) I dont see any clear error :3
 
-make -j1 O=out clean mrproper
-make -j1 O=out ARCH=arm64 vendor/meteoric_defconfig
+# Paths
+BASE_DEFCONFIG="arch/arm64/configs/meteoric_defconfig"
+FRAGMENT="ksu_ci.config"
+OUTDIR="out"
 
-cat > ksu_ci.config << 'EOF'
+# 1. Write your custom fragment
+cat > "${FRAGMENT}" << 'EOF'
 #
 # Meteoric Kernel v6 – KernelSU-Next + SUSFS, Nothing Phone 2 (SM8475)
 #
 
-#
 # KernelSU-Next SUSFS integration
-#
 CONFIG_KSU_SUSFS_HAS_OVERLAYFS=y
 CONFIG_KSU_SUSFS_AUTO_ADD_PATH=y
 CONFIG_KSU_SUSFS_AUTO_ADD_MOUNT=y
 CONFIG_KSU_SUSFS_AUTO_TRY_UMOUNT=y
 
-#
 # Underlying filesystem support
-#
 CONFIG_OVERLAY_FS=y
 CONFIG_PROC_FS=y
 
@@ -136,5 +135,14 @@ CONFIG_BATTERY_BCL=y
 CONFIG_QTI_QBG=y
 EOF
 
-make -j1 O=out CC=clang ARCH=arm64 vendor/meteoric_defconfig ksu_ci.config savedefconfig
-rm -f ksu_ci.config
+# 2. Merge fragment into the base defconfig (non-interactive)
+scripts/kconfig/merge_config.sh \
+  "${BASE_DEFCONFIG}" \
+  "${FRAGMENT}" \
+  > "${OUTDIR}/.config"
+
+# 3. Resolve any new dependencies with default answers
+make -C "${OUTDIR}" olddefconfig
+
+# 4. Clean up fragment
+rm -f "${FRAGMENT}"
