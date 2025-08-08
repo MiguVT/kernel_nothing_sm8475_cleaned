@@ -5,11 +5,9 @@ export ARCH=arm64 SUBARCH=arm64
 export KBUILD_BUILD_HOST=GitHub-Actions
 export KBUILD_BUILD_USER=ci-builder
 
-# 1. Clean slate and load vendor defaults
 make -j1 O=out clean mrproper
-make -j1 O=out ARCH=$ARCH vendor/meteoric_defconfig
+make -j1 O=out ARCH=arm64 vendor/meteoric_defconfig
 
-# 2. Generate custom config via AllConfig mechanism
 cat > ksu_ci.config << 'EOF'
 #
 # Meteoric Kernel v6 – KernelSU-Next + SUSFS, Nothing Phone 2 (SM8475)
@@ -124,12 +122,5 @@ CONFIG_BATTERY_BCL=y
 CONFIG_QTI_QBG=y
 EOF
 
-# 3. Point the build at your allconfig and run non-interactive olddefconfig
-export KCONFIG_ALLCONFIG=$(pwd)/ksu_ci.config
-make -j1 O=out ARCH=$ARCH LLVM=1 LLVM_IAS=1 olddefconfig
-
-# 4. Produce the minimized .config
-make -j1 O=out ARCH=$ARCH CC=clang LLVM=1 LLVM_IAS=1 savedefconfig
-
-# 5. Cleanup
+make -j1 O=out CC=clang ARCH=arm64 vendor/meteoric_defconfig ksu_ci.config savedefconfig
 rm -f ksu_ci.config
