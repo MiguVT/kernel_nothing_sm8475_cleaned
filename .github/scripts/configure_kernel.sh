@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Paths
-BASE_DEFCONFIG="arch/arm64/configs/meteoric_defconfig"
+BASE_DEFCONFIG="arch/arm64/configs/vendor/meteoric_defconfig"
 FRAGMENT="ksu_ci.config"
 OUTDIR="out"
 
