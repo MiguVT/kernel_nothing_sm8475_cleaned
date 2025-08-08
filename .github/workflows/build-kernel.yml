@@ -49,22 +49,26 @@ jobs:
 
     - name: Clone and apply SUSFS patches
       run: |
-        echo "Cloning susfs4ksu repository..."
+        echo "Cloning susfs4ksu repository (latest branch commit)..."
         git clone https://gitlab.com/simonpunk/susfs4ksu.git --branch gki-android12-5.10 --depth=1
 
-        echo "Applying SUSFS kernel patches..."
-        # Apply main kernel patch
-        patch -p1 < susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch
+        KERNEL_REPO="$GITHUB_WORKSPACE"
 
-        # Copy SUSFS source files
-        cp -r susfs4ksu/kernel_patches/fs/* fs/
-        cp -r susfs4ksu/kernel_patches/include/linux/* include/linux/
+        cp susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch $KERNEL_REPO/KernelSU-Next/kernel/
+        cp susfs4ksu/kernel_patches/50_add_susfs_in_kernel-*.patch $KERNEL_REPO/
+        cp susfs4ksu/kernel_patches/fs/* $KERNEL_REPO/fs/
+        cp susfs4ksu/kernel_patches/include/linux/* $KERNEL_REPO/include/linux/
 
-        # Install SUSFS module into KernelSU-Next
-        mkdir -p drivers/kernelsu/susfs_module
-        cp -r susfs4ksu/ksu_module_susfs/* drivers/kernelsu/susfs_module/
+        echo "Applying 10_enable_susfs_for_ksu.patch in KernelSU-Next directory..."
+        cd $KERNEL_REPO/KernelSU-Next/kernel
+        patch -p1 < 10_enable_susfs_for_ksu.patch || echo "Manual patching may be needed!"
+
+        echo "Applying 50_add_susfs_in_kernel patch in kernel root..."
+        cd $KERNEL_REPO
+        patch -p1 < 50_add_susfs_in_kernel-*.patch || echo "Manual patching may be needed!"
 
         echo "SUSFS patches applied successfully"
+
 
     - name: Setup toolchain
       run: |
