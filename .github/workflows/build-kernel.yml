@@ -73,19 +73,17 @@ jobs:
         cd ~/toolchain/neutron-clang
         curl -sL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman -o antman
         chmod +x antman && ./antman -S
-    
+
         # Verify toolchain
         ~/toolchain/neutron-clang/bin/clang --version
         ~/toolchain/neutron-clang/bin/ld.lld --version
-    
-        echo "~/toolchain/neutron-clang/bin" >> $GITHUB_PATH
 
+        echo "~/toolchain/neutron-clang/bin" >> $GITHUB_PATH
 
     - name: Configure and Optimize Kernel
       run: |
         chmod +x .github/scripts/configure_kernel.sh
         ./.github/scripts/configure_kernel.sh
-
 
     - name: Build kernel
       run: |
@@ -95,15 +93,15 @@ jobs:
         export KBUILD_BUILD_USER=ci-builder
         export PROCS=$(nproc)
         export LD=ld.lld
-    
+
         # Enhanced build flags for maximum performance
         export KCFLAGS="-O3 -march=armv8.2-a+crypto+fp16+rcpc+dotprod"
         export KCPPFLAGS="-DCONFIG_LOCALVERSION_AUTO=n"
-    
+
         echo "Starting optimized kernel compilation..."
         echo "CPU cores available: $PROCS"
         echo "Build host: $KBUILD_BUILD_HOST"
-    
+
         make -j$PROCS O=out ARCH=arm64 \
              LLVM=1 LLVM_IAS=1 \
              CLANG_TRIPLE=aarch64-linux-gnu- \
@@ -116,7 +114,7 @@ jobs:
              KCPPFLAGS="$KCPPFLAGS" \
              V=1 \
              2>&1 | tee out/build.log
-    
+
         # Enhanced validation
         if [ ! -f out/arch/arm64/boot/Image ]; then
           echo "❌ Kernel compilation failed!"
@@ -124,52 +122,52 @@ jobs:
           tail -20 out/build.log
           exit 1
         fi
-    
+
         # Display build statistics
         echo "✅ Kernel compiled successfully"
         echo "Kernel image size: $(du -h out/arch/arm64/boot/Image | cut -f1)"
         echo "Build time: $(date)"
 
-        - name: Upload build logs on failure
-          if: failure()
-          uses: actions/upload-artifact@v4
-          with:
-            name: build-failure-logs-${{ github.run_number }}
-            path: |
-              out/build.log
-              out/.config
-            retention-days: 7
+    - name: Upload build logs on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-failure-logs-${{ github.run_number }}
+        path: |
+          out/build.log
+          out/.config
+        retention-days: 7
 
-        - name: Package kernel
-          run: |
-            echo "Packaging kernel..."
+    - name: Package kernel
+      run: |
+        echo "Packaging kernel..."
 
-            # Create output directory
-            mkdir -p kernel_output
+        # Create output directory
+        mkdir -p kernel_output
 
-            # Copy kernel components
-            cp out/arch/arm64/boot/Image kernel_output/
-            cp out/arch/arm64/boot/dtb kernel_output/ 2>/dev/null || true
-            cp out/arch/arm64/boot/dtbo.img kernel_output/ 2>/dev/null || true
+        # Copy kernel components
+        cp out/arch/arm64/boot/Image kernel_output/
+        cp out/arch/arm64/boot/dtb kernel_output/ 2>/dev/null || true
+        cp out/arch/arm64/boot/dtbo.img kernel_output/ 2>/dev/null || true
 
-            # Create AnyKernel3 package if available
-            if [ -d "anykernel" ]; then
-              cp out/arch/arm64/boot/Image anykernel/
-              cp out/arch/arm64/boot/dtb anykernel/ 2>/dev/null || true
-              cp out/arch/arm64/boot/dtbo.img anykernel/ 2>/dev/null || true
+        # Create AnyKernel3 package if available
+        if [ -d "anykernel" ]; then
+          cp out/arch/arm64/boot/Image anykernel/
+          cp out/arch/arm64/boot/dtb anykernel/ 2>/dev/null || true
+          cp out/arch/arm64/boot/dtbo.img anykernel/ 2>/dev/null || true
 
-              cd anykernel
-              ZIPNAME="Meteoric-KernelSU-Next-SUSFS-${{ github.event.inputs.version }}-$(date +%y%m%d-%H%M).zip"
-              zip -r9 "../kernel_output/$ZIPNAME" *
-              cd ..
-              echo "ZIPNAME=$ZIPNAME" >> $GITHUB_ENV
-            else
-              # Create basic zip
-              cd kernel_output
-              ZIPNAME="Meteoric-KernelSU-Next-SUSFS-${{ github.event.inputs.version }}-$(date +%y%m%d-%H%M).zip"
-              zip -r9 "$ZIPNAME" Image dtb dtbo.img 2>/dev/null || zip -r9 "$ZIPNAME" Image
-              echo "ZIPNAME=$ZIPNAME" >> $GITHUB_ENV
-            fi
+          cd anykernel
+          ZIPNAME="Meteoric-KernelSU-Next-SUSFS-${{ github.event.inputs.version }}-$(date +%y%m%d-%H%M).zip"
+          zip -r9 "../kernel_output/$ZIPNAME" *
+          cd ..
+          echo "ZIPNAME=$ZIPNAME" >> $GITHUB_ENV
+        else
+          # Create basic zip
+          cd kernel_output
+          ZIPNAME="Meteoric-KernelSU-Next-SUSFS-${{ github.event.inputs.version }}-$(date +%y%m%d-%H%M).zip"
+          zip -r9 "$ZIPNAME" Image dtb dtbo.img 2>/dev/null || zip -r9 "$ZIPNAME" Image
+          echo "ZIPNAME=$ZIPNAME" >> $GITHUB_ENV
+        fi
 
     - name: Upload artifacts
       if: ${{ !github.event.inputs.make_draft }}
@@ -196,10 +194,12 @@ jobs:
           - KernelSU-Next integration for advanced root management
           - SUSFS (SuFS) for comprehensive root hiding at kernel level
           - Compatible with Nothing Phone 2 (SM8475)
+          - Production-optimized for SM8475 Snapdragon 8+ Gen 1
+          - Enhanced build flags for maximum performance
 
           **Installation:**
           1. Flash the provided ZIP file via custom recovery (TWRP/OrangeFox)
-          2. Or extract boot.img and flash via fastboot: `fastboot flash boot boot.img` (Not tested, I (MiguVT) use OrangeFox) 
+          2. Or extract boot.img and flash via fastboot: `fastboot flash boot boot.img`
 
           **KernelSU Manager:**
           - Install KernelSU-Next Manager APK
@@ -208,7 +208,8 @@ jobs:
           **Changelog:**
           - Updated to latest KernelSU-Next
           - Integrated SUSFS patches for enhanced root hiding
-          - Optimized build configuration
+          - Production-ready optimized build configuration
+          - Enhanced build flags for SM8475 architecture
 
         files: |
           kernel_output/*.zip
