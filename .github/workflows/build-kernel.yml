@@ -54,21 +54,30 @@ jobs:
 
         KERNEL_REPO="$GITHUB_WORKSPACE"
 
-        cp susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch $KERNEL_REPO/KernelSU-Next/kernel/
+        # Copy patches to correct locations
+        cp susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch $KERNEL_REPO/KernelSU-Next/
         cp susfs4ksu/kernel_patches/50_add_susfs_in_*.patch $KERNEL_REPO/
-        cp susfs4ksu/kernel_patches/fs/* $KERNEL_REPO/fs/
-        cp susfs4ksu/kernel_patches/include/linux/* $KERNEL_REPO/include/linux/
 
-        echo "Applying 10_enable_susfs_for_ksu.patch in KernelSU-Next directory..."
-        cd $KERNEL_REPO/KernelSU-Next/kernel
-        patch -p1 < 10_enable_susfs_for_ksu.patch || echo "Manual patching may be needed!"
+        # Copy SUSFS source files
+        cp -r susfs4ksu/kernel_patches/fs/* $KERNEL_REPO/fs/
+        cp -r susfs4ksu/kernel_patches/include/linux/* $KERNEL_REPO/include/linux/
+
+        # Install SUSFS module into KernelSU-Next
+        mkdir -p $KERNEL_REPO/KernelSU-Next/ksu_module_susfs
+        cp -r susfs4ksu/ksu_module_susfs/* $KERNEL_REPO/KernelSU-Next/ksu_module_susfs/
+
+        echo "Applying 10_enable_susfs_for_ksu.patch in KernelSU-Next root..."
+        cd $KERNEL_REPO/KernelSU-Next
+        patch -p1 < 10_enable_susfs_for_ksu.patch
 
         echo "Applying 50_add_susfs_in_ patch in kernel root..."
         cd $KERNEL_REPO
-        patch -p1 < 50_add_susfs_in_*.patch || echo "Manual patching may be needed!"
+        patch -p1 < 50_add_susfs_in_*.patch
+
+        # Cleanup
+        rm -rf susfs4ksu
 
         echo "SUSFS patches applied successfully"
-
 
     - name: Setup toolchain
       run: |
