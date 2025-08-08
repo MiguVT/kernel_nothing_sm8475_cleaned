@@ -5,40 +5,41 @@ export ARCH=arm64 SUBARCH=arm64
 export KBUILD_BUILD_HOST=GitHub-Actions
 export KBUILD_BUILD_USER=ci-builder
 
-# Clean and initialize configuration
+# 1. Clean slate and load vendor defaults
 make -j1 O=out clean mrproper
 make -j1 O=out ARCH=$ARCH vendor/meteoric_defconfig
 
-# Generate optimized config for Nothing Phone 2 (SM8475)
+# 2. Generate custom config via AllConfig mechanism
 cat > ksu_ci.config << 'EOF'
-# KernelSU-Next & SUSFS
+#
+# Meteoric Kernel v6 – KernelSU-Next + SUSFS, Nothing Phone 2 (SM8475)
+#
+
+# Base integration
 CONFIG_KSU=y
 CONFIG_KSU_SUSFS=y
 CONFIG_KSU_SUSFS_MODULE=y
 CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
 
-# Meteoric optimizations
-CONFIG_CPU_INPUT_BOOST=y
-CONFIG_CPU_INPUT_BOOST_DURATION_MS=250
-CONFIG_CPU_INPUT_BOOST_FREQ_LP=1036800
-CONFIG_CPU_INPUT_BOOST_FREQ_PERF=1536000
-
-# Scheduler
+# Scheduler & performance
 CONFIG_CASS_SCHED=y
 CONFIG_SCHED_WALT=y
 CONFIG_SCHED_TUNE=y
 CONFIG_SCHED_BOOST=y
-
-# Performance & power
-CONFIG_LTO_CLANG_THIN=y
-CONFIG_LTO_CLANG_THIN_RAMSIZE=128
-CONFIG_PREEMPT_NONE=y
+CONFIG_CPU_INPUT_BOOST=y
+CONFIG_CPU_INPUT_BOOST_DURATION_MS=150
+CONFIG_CPU_INPUT_BOOST_FREQ_LP=1036800
+CONFIG_CPU_INPUT_BOOST_FREQ_PERF=1536000
 CONFIG_HZ=300
+CONFIG_PREEMPT_NONE=y
+
+# Power-saving modes
 CONFIG_NO_HZ_FULL=y
 CONFIG_NO_HZ_IDLE=y
 CONFIG_CPU_IDLE_GOV_MENU=y
+CONFIG_ARCH_HAS_CPU_RELAX=y
 
-# Thermal & freq
+# Thermal & frequency governors
 CONFIG_THERMAL=y
 CONFIG_THERMAL_GOV_STEP_WISE=y
 CONFIG_CPU_THERMAL=y
@@ -47,7 +48,7 @@ CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y
 CONFIG_CPU_FREQ_GOV_PERFORMANCE=y
 CONFIG_CPU_FREQ_GOV_INTERACTIVE=y
 
-# Memory & I/O
+# Memory & I/O optimizations
 CONFIG_VMAP_STACK=y
 CONFIG_ZRAM=y
 CONFIG_ZRAM_DEF_COMP_LZ4=y
@@ -65,34 +66,49 @@ CONFIG_TCP_CONG_BBR=y
 CONFIG_TCP_CONG_BBR2=y
 CONFIG_DEFAULT_TCP_CONG="bbr2"
 
-# ARM64 & security
+# ARM64 architecture features
 CONFIG_ARM64_PTR_AUTH=y
 CONFIG_ARM64_BTI=y
-CONFIG_ARCH_RANDOM=y
 CONFIG_ARM64_CRYPTO=y
+CONFIG_ARCH_RANDOM=y
+
+# Security hardening (production)
 CONFIG_HARDENED_USERCOPY=y
 CONFIG_SLAB_FREELIST_RANDOM=y
 CONFIG_SLAB_FREELIST_HARDENED=y
 CONFIG_STACKPROTECTOR_STRONG=y
 CONFIG_SHADOW_CALL_STACK=y
 
-# Optional sanitizers (development)
-CONFIG_UBSAN=y
-CONFIG_UBSAN_TRAP=y
-CONFIG_UBSAN_BOUNDS=y
+# Disable unnecessary 32-bit compatibility
+CONFIG_COMPAT=n
+CONFIG_COMPAT_VDSO=n
+CONFIG_THUMB2_COMPAT_VDSO=n
+CONFIG_KUSER_HELPERS=n
 
-# Display, audio & filesystems
-CONFIG_DRM_MSM=y
-CONFIG_FB_MSM_MDSS=y
-CONFIG_SND_SOC_WCD938X=y
-CONFIG_SOUND_CONTROL=y
+# Disable sanitizers for release
+CONFIG_UBSAN=n
+CONFIG_KASAN=n
+
+# Filesystems & graphics
 CONFIG_F2FS_FS=y
 CONFIG_EXT4_USE_FOR_EXT2=y
+CONFIG_DRM_MSM=y
+CONFIG_FB_MSM_MDSS=y
 
-# Subsystems & features
+# Audio
+CONFIG_SND_SOC_WCD938X=y
+CONFIG_SOUND_CONTROL=y
+
+# Essential subsystems
 CONFIG_CGROUPS=y
 CONFIG_NAMESPACES=y
 CONFIG_USER_NS=y
+
+# Shipping-only features
+CONFIG_MODVERSIONS=y
+CONFIG_RELR=y
+
+# Meteoric extras
 CONFIG_KSU_NEXT=y
 CONFIG_SUSFS_VERSION=154
 CONFIG_HBM_FOD_OPTIMIZATION=y
@@ -101,13 +117,15 @@ CONFIG_HAPTIC_INTENSITY_CONTROL=y
 CONFIG_KCAL=y
 CONFIG_KLAPSE=y
 
-# Battery & charging
+# Battery charging
 CONFIG_QCOM_BATTERY_CHARGER=y
 CONFIG_SMB1390_CHARGE_PUMP=y
 CONFIG_BATTERY_BCL=y
 CONFIG_QTI_QBG=y
 EOF
 
-# Generate the final config and clean up
-make -j1 O=out CC=clang ARCH=$ARCH vendor/meteoric_defconfig ksu_ci.config savedefconfig
+# 3. Non-interactive merge and final save
+export KCONFIG_ALLCONFIG=ksu_ci.config
+make -j1 O=out ARCH=$ARCH olddefconfig
+make -j1 O=out CC=clang ARCH=$ARCH savedefconfig
 rm -f ksu_ci.config
