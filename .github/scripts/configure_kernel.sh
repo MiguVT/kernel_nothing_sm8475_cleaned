@@ -1,148 +1,63 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# This script merges KSU+SUSFS settings into vendor defconfig
-# and generates an out/.config for the build workflow.
-# hope this work :) I dont see any clear error :3
-
 # Paths
 BASE_DEFCONFIG="arch/arm64/configs/meteoric_defconfig"
 FRAGMENT="ksu_ci.config"
 OUTDIR="out"
 
-# 1. Write your custom fragment
+mkdir -p "${OUTDIR}"
+
+# 1. Write minimal override fragment
 cat > "${FRAGMENT}" << 'EOF'
 #
-# Meteoric Kernel v6 – KernelSU-Next + SUSFS, Nothing Phone 2 (SM8475)
+# ksu_ci.config – minimal overrides for Meteoric Kernel v6 (SM8475)
 #
 
-# KernelSU-Next SUSFS integration
+# KernelSU-Next + SUSFS (mandatory for root hiding)
+CONFIG_KSU_NEXT=y
 CONFIG_KSU_SUSFS_HAS_OVERLAYFS=y
 CONFIG_KSU_SUSFS_AUTO_ADD_PATH=y
 CONFIG_KSU_SUSFS_AUTO_ADD_MOUNT=y
 CONFIG_KSU_SUSFS_AUTO_TRY_UMOUNT=y
 
-# Underlying filesystem support
-CONFIG_OVERLAY_FS=y
-CONFIG_PROC_FS=y
-
-# Scheduler & performance
+# Project Matrixx scheduler & performance
 CONFIG_CASS_SCHED=y
-CONFIG_SCHED_WALT=y
 CONFIG_SCHED_TUNE=y
 CONFIG_SCHED_BOOST=y
 CONFIG_CPU_INPUT_BOOST=y
 CONFIG_CPU_INPUT_BOOST_DURATION_MS=150
-CONFIG_CPU_INPUT_BOOST_FREQ_LP=1036800
-CONFIG_CPU_INPUT_BOOST_FREQ_PERF=1536000
+CONFIG_CPU_INPUT_BOOST_FREQ_LP=1248000
+CONFIG_CPU_INPUT_BOOST_FREQ_PERF=2304000
 CONFIG_HZ=300
-CONFIG_PREEMPT_VOLUNTARY=y
 
-# Power-saving modes
+# Tickless power-saving
 CONFIG_NO_HZ_FULL=y
 CONFIG_NO_HZ_IDLE=y
-CONFIG_CPU_IDLE_GOV_MENU=y
-CONFIG_ARCH_HAS_CPU_RELAX=y
 
-# Thermal & frequency governors
-CONFIG_THERMAL=y
-CONFIG_THERMAL_GOV_STEP_WISE=y
-CONFIG_CPU_THERMAL=y
-CONFIG_DEVFREQ_THERMAL=y
-CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y
-CONFIG_CPU_FREQ_GOV_PERFORMANCE=y
-CONFIG_CPU_FREQ_GOV_INTERACTIVE=y
-
-# Memory & I/O optimizations
-CONFIG_VMAP_STACK=y
+# ZRAM built-in for swap
 CONFIG_ZRAM=y
 CONFIG_ZRAM_DEF_COMP_LZ4=y
-CONFIG_ZRAM_DEF_COMP_ZSTD=n
-CONFIG_ZRAM_MEMORY_TRACKING=y
 CONFIG_FRONTSWAP=y
-CONFIG_CMA=y
-CONFIG_ZSMALLOC=y
-CONFIG_MGLRU=y
-CONFIG_IOSCHED_MAPLE=y
-CONFIG_BFQ_GROUP_IOSCHED=y
-CONFIG_DEFAULT_IOSCHED="maple"
-CONFIG_DEFERRED_STRUCT_PAGE=n
 
-# Networking
-CONFIG_TCP_CONG_BBR=y
-CONFIG_TCP_CONG_BBR2=y
+# Enforce BBR as default TCP congestion  
 CONFIG_DEFAULT_TCP_CONG="bbr2"
 
-# ARM64 architecture features
-CONFIG_ARM64_PTR_AUTH=y
-CONFIG_ARM64_BTI=y
-CONFIG_ARM64_CRYPTO=y
-CONFIG_ARCH_RANDOM=y
+# Preserve 32-bit compatibility for vendor blobs
+CONFIG_COMPAT_VDSO=y
+CONFIG_THUMB2_COMPAT_VDSO=y
+CONFIG_KUSER_HELPERS=y
 
-# Security hardening (production)
-CONFIG_HARDENED_USERCOPY=y
-CONFIG_SLAB_FREELIST_RANDOM=y
-CONFIG_SLAB_FREELIST_HARDENED=y
-CONFIG_STACKPROTECTOR_STRONG=y
-CONFIG_SHADOW_CALL_STACK=y
-
-# Disable unnecessary 32-bit compatibility
-CONFIG_COMPAT=n
-CONFIG_COMPAT_VDSO=n
-CONFIG_THUMB2_COMPAT_VDSO=n
-CONFIG_KUSER_HELPERS=n
-
-# Disable sanitizers for release
+# Disable debug/sanitizer for production
 CONFIG_UBSAN=n
 CONFIG_KASAN=n
-
-# Filesystems & graphics
-CONFIG_F2FS_FS=y
-CONFIG_EXT4_USE_FOR_EXT2=y
-CONFIG_DRM_MSM=y
-CONFIG_FB_MSM_MDSS=y
-
-# Audio
-CONFIG_SND_SOC_WCD938X=y
-CONFIG_SOUND_CONTROL=y
-
-# Essential subsystems
-CONFIG_CGROUPS=y
-CONFIG_NAMESPACES=y
-CONFIG_USER_NS=y
-
-# Shipping-only features
-CONFIG_MODVERSIONS=y
-CONFIG_RELR=y
-
-# Enhanced debugging/tracing (optional, disable for prod)
-CONFIG_FTRACE=n
-CONFIG_FUNCTION_TRACER=n
-
-# Meteoric extras
-CONFIG_KSU_NEXT=y
-CONFIG__VERSION=154
-CONFIG_HBM_FOD_OPTIMIZATION=y
-CONFIG_WIRELESS_CHARGING_CONTROL=y
-CONFIG_HAPTIC_INTENSITY_CONTROL=y
-CONFIG_KCAL=y
-CONFIG_KLAPSE=y
-
-# Battery charging
-CONFIG_QCOM_BATTERY_CHARGER=y
-CONFIG_SMB1390_CHARGE_PUMP=y
-CONFIG_BATTERY_BCL=y
-CONFIG_QTI_QBG=y
 EOF
 
-# 2. Merge fragment into the base defconfig (non-interactive)
-scripts/kconfig/merge_config.sh \
-  "${BASE_DEFCONFIG}" \
-  "${FRAGMENT}" \
-  > "${OUTDIR}/.config"
-
-# 3. Resolve any new dependencies with default answers
+# 2. Merge non-interactively and resolve dependencies
+scripts/kconfig/merge_config.sh "${BASE_DEFCONFIG}" "${FRAGMENT}" > "${OUTDIR}/.config"
 make -C "${OUTDIR}" olddefconfig
 
-# 4. Clean up fragment
+# 3. Cleanup
 rm -f "${FRAGMENT}"
+
+echo "✅ out/.config ready: optimized minimal overrides applied."
