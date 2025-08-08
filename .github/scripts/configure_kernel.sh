@@ -5,57 +5,84 @@ export ARCH=arm64 SUBARCH=arm64
 export KBUILD_BUILD_HOST=GitHub-Actions
 export KBUILD_BUILD_USER=ci-builder
 
-# 1) Clean and apply base defconfig
 make -j1 O=out clean mrproper
 make -j1 O=out ARCH=arm64 vendor/meteoric_defconfig
 
-# 2) Create config fragment (replicating ksu.config approach)
+# Complete optimization for Nothing Phone 2 (SM8475)
 cat > ksu_ci.config << 'EOF'
-# KernelSU-Next & SUSFS integration
+# KernelSU-Next & SUSFS (stable integration)
 CONFIG_KSU=y
 CONFIG_KSU_SUSFS=y
 CONFIG_KSU_SUSFS_MODULE=y
 CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
 
-# Legacy compatibility disabling
-# CONFIG_IA32_EMULATION is not set
-# CONFIG_COMPAT_VDSO32 is not set
-# CONFIG_COMPAT_VDSO32_X86_OLD is not set
+# Remove sanitizers for performance
+# CONFIG_UBSAN is not set
+# CONFIG_KASAN is not set
 
-# Strip debug & disable module signing
+# Keep essential security hardening
+CONFIG_HARDENED_USERCOPY=y
+CONFIG_SLAB_FREELIST_RANDOM=y
+CONFIG_SLAB_FREELIST_HARDENED=y
+CONFIG_STACKPROTECTOR_STRONG=y
+CONFIG_SHADOW_CALL_STACK=y
+
+# ARM64 advanced optimizations for Kryo 670
+CONFIG_ARM64_PTR_AUTH=y
+CONFIG_ARM64_BTI=y
+# CONFIG_ARM64_BTI_KERNEL is not set
+CONFIG_ARM64_E0PD=y
+CONFIG_ARM64_TLB_RANGE=y
+CONFIG_ARCH_RANDOM=y
+
+# Optimize for SM8475 performance
+CONFIG_LTO_CLANG_THIN=y
+CONFIG_LTO_CLANG_THIN_RAMSIZE=128
+CONFIG_PREEMPT_NONE=y
+CONFIG_HZ=500
+
+# Memory layout optimizations
+CONFIG_ARCH_MMAP_RND_BITS=18
+CONFIG_VMAP_STACK=y
+CONFIG_RELR=y
+
+# CPU frequency scaling (battery + performance)
+CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y
+CONFIG_CPU_FREQ_GOV_PERFORMANCE=y
+# CONFIG_CPU_FREQ_GOV_ONDEMAND is not set
+# CONFIG_CPU_FREQ_GOV_CONSERVATIVE is not set
+
+# Power management optimizations
+CONFIG_CPU_IDLE=y
+CONFIG_CPU_IDLE_GOV_MENU=y
+CONFIG_ARCH_HAS_CPU_RELAX=y
+
+# Thermal management (critical for SD8+G1)
+CONFIG_THERMAL=y
+CONFIG_THERMAL_GOV_STEP_WISE=y
+CONFIG_CPU_THERMAL=y
+
+# Memory compression for battery
+CONFIG_ZSMALLOC=y
+CONFIG_ZRAM=y
+CONFIG_ZRAM_DEF_COMP_LZ4=y
+CONFIG_FRONTSWAP=y
+CONFIG_CMA=y
+
+# I/O optimization
+CONFIG_IOSCHED_BFQ=y
+CONFIG_BFQ_GROUP_IOSCHED=y
+
+# GKI optimizations
+CONFIG_MODVERSIONS=y
+CONFIG_TRIM_UNUSED_KSYMS=y
+
+# Debug stripping (safe for production)
 # CONFIG_DEBUG_INFO is not set
 # CONFIG_DEBUG_KERNEL is not set
-CONFIG_SYSTEM_TRUSTED_KEYS=""
-# CONFIG_MODULE_SIG is not set
-# CONFIG_MODULE_SIG_ALL is not set
-# CONFIG_MODULE_SIG_FORCE is not set
-
-# Clang ThinLTO
-CONFIG_LTO_CLANG_THIN=y
-CONFIG_LTO_CLANG_THIN_RAMSIZE=64
-
-# Hardening sanitizers
-CONFIG_UBSAN=y
-CONFIG_UBSAN_TRAP=y
-CONFIG_UBSAN_BOUNDS=y
-CONFIG_UBSAN_SANITIZE_ALL=y
-CONFIG_KASAN=y
-CONFIG_KASAN_OUTLINE=y
-
-# Performance & tickless idle
-CONFIG_PREEMPT_NONE=y
-CONFIG_HZ=300
-CONFIG_NO_HZ_FULL=y
-
-# Minimal subsystems
-CONFIG_CGROUPS=y
-CONFIG_NAMESPACES=y
 # CONFIG_FTRACE is not set
-# CONFIG_UPROBES is not set
+# CONFIG_TRACING is not set
 EOF
 
-# 3) Apply fragment and finalize (exactly like legacy build.sh)
 make -j1 O=out CC=clang ARCH=arm64 vendor/meteoric_defconfig ksu_ci.config savedefconfig
-
-# 4) Clean up
 rm -f ksu_ci.config
