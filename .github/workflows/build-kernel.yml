@@ -55,7 +55,7 @@ jobs:
         KERNEL_REPO="$GITHUB_WORKSPACE"
 
         cp susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch $KERNEL_REPO/KernelSU-Next/kernel/
-        cp susfs4ksu/kernel_patches/50_add_susfs_in_kernel-*.patch $KERNEL_REPO/
+        cp susfs4ksu/kernel_patches/50_add_susfs_in_*.patch $KERNEL_REPO/
         cp susfs4ksu/kernel_patches/fs/* $KERNEL_REPO/fs/
         cp susfs4ksu/kernel_patches/include/linux/* $KERNEL_REPO/include/linux/
 
@@ -63,9 +63,9 @@ jobs:
         cd $KERNEL_REPO/KernelSU-Next/kernel
         patch -p1 < 10_enable_susfs_for_ksu.patch || echo "Manual patching may be needed!"
 
-        echo "Applying 50_add_susfs_in_kernel patch in kernel root..."
+        echo "Applying 50_add_susfs_in_ patch in kernel root..."
         cd $KERNEL_REPO
-        patch -p1 < 50_add_susfs_in_kernel-*.patch || echo "Manual patching may be needed!"
+        patch -p1 < 50_add_susfs_in_*.patch || echo "Manual patching may be needed!"
 
         echo "SUSFS patches applied successfully"
 
