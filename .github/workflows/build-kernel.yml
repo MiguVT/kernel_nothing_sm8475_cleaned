@@ -68,12 +68,18 @@ jobs:
 
     - name: Setup toolchain
       run: |
-        echo "Setting up Neutron toolchain..."
+        echo "Setting up optimized Neutron toolchain..."
         mkdir -p ~/toolchain/neutron-clang
         cd ~/toolchain/neutron-clang
         curl -sL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman -o antman
         chmod +x antman && ./antman -S
+    
+        # Verify toolchain
+        ~/toolchain/neutron-clang/bin/clang --version
+        ~/toolchain/neutron-clang/bin/ld.lld --version
+    
         echo "~/toolchain/neutron-clang/bin" >> $GITHUB_PATH
+
 
     - name: Configure and Optimize Kernel
       run: |
@@ -89,9 +95,15 @@ jobs:
         export KBUILD_BUILD_USER=ci-builder
         export PROCS=$(nproc)
         export LD=ld.lld
-
-        echo "Starting kernel compilation..."
-
+    
+        # Enhanced build flags for maximum performance
+        export KCFLAGS="-O3 -march=armv8.2-a+crypto+fp16+rcpc+dotprod"
+        export KCPPFLAGS="-DCONFIG_LOCALVERSION_AUTO=n"
+    
+        echo "Starting optimized kernel compilation..."
+        echo "CPU cores available: $PROCS"
+        echo "Build host: $KBUILD_BUILD_HOST"
+    
         make -j$PROCS O=out ARCH=arm64 \
              LLVM=1 LLVM_IAS=1 \
              CLANG_TRIPLE=aarch64-linux-gnu- \
@@ -100,45 +112,64 @@ jobs:
              AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump \
              STRIP=llvm-strip LD=ld.lld \
              CC=clang \
+             KCFLAGS="$KCFLAGS" \
+             KCPPFLAGS="$KCPPFLAGS" \
+             V=1 \
              2>&1 | tee out/build.log
-
+    
+        # Enhanced validation
         if [ ! -f out/arch/arm64/boot/Image ]; then
-          echo "Kernel compilation failed!"
+          echo "❌ Kernel compilation failed!"
+          echo "Build log tail:"
+          tail -20 out/build.log
           exit 1
         fi
+    
+        # Display build statistics
+        echo "✅ Kernel compiled successfully"
+        echo "Kernel image size: $(du -h out/arch/arm64/boot/Image | cut -f1)"
+        echo "Build time: $(date)"
 
-        echo "Kernel compiled successfully"
+        - name: Upload build logs on failure
+          if: failure()
+          uses: actions/upload-artifact@v4
+          with:
+            name: build-failure-logs-${{ github.run_number }}
+            path: |
+              out/build.log
+              out/.config
+            retention-days: 7
 
-    - name: Package kernel
-      run: |
-        echo "Packaging kernel..."
+        - name: Package kernel
+          run: |
+            echo "Packaging kernel..."
 
-        # Create output directory
-        mkdir -p kernel_output
+            # Create output directory
+            mkdir -p kernel_output
 
-        # Copy kernel components
-        cp out/arch/arm64/boot/Image kernel_output/
-        cp out/arch/arm64/boot/dtb kernel_output/ 2>/dev/null || true
-        cp out/arch/arm64/boot/dtbo.img kernel_output/ 2>/dev/null || true
+            # Copy kernel components
+            cp out/arch/arm64/boot/Image kernel_output/
+            cp out/arch/arm64/boot/dtb kernel_output/ 2>/dev/null || true
+            cp out/arch/arm64/boot/dtbo.img kernel_output/ 2>/dev/null || true
 
-        # Create AnyKernel3 package if available
-        if [ -d "anykernel" ]; then
-          cp out/arch/arm64/boot/Image anykernel/
-          cp out/arch/arm64/boot/dtb anykernel/ 2>/dev/null || true
-          cp out/arch/arm64/boot/dtbo.img anykernel/ 2>/dev/null || true
+            # Create AnyKernel3 package if available
+            if [ -d "anykernel" ]; then
+              cp out/arch/arm64/boot/Image anykernel/
+              cp out/arch/arm64/boot/dtb anykernel/ 2>/dev/null || true
+              cp out/arch/arm64/boot/dtbo.img anykernel/ 2>/dev/null || true
 
-          cd anykernel
-          ZIPNAME="Meteoric-KernelSU-Next-SUSFS-${{ github.event.inputs.version }}-$(date +%y%m%d-%H%M).zip"
-          zip -r9 "../kernel_output/$ZIPNAME" *
-          cd ..
-          echo "ZIPNAME=$ZIPNAME" >> $GITHUB_ENV
-        else
-          # Create basic zip
-          cd kernel_output
-          ZIPNAME="Meteoric-KernelSU-Next-SUSFS-${{ github.event.inputs.version }}-$(date +%y%m%d-%H%M).zip"
-          zip -r9 "$ZIPNAME" Image dtb dtbo.img 2>/dev/null || zip -r9 "$ZIPNAME" Image
-          echo "ZIPNAME=$ZIPNAME" >> $GITHUB_ENV
-        fi
+              cd anykernel
+              ZIPNAME="Meteoric-KernelSU-Next-SUSFS-${{ github.event.inputs.version }}-$(date +%y%m%d-%H%M).zip"
+              zip -r9 "../kernel_output/$ZIPNAME" *
+              cd ..
+              echo "ZIPNAME=$ZIPNAME" >> $GITHUB_ENV
+            else
+              # Create basic zip
+              cd kernel_output
+              ZIPNAME="Meteoric-KernelSU-Next-SUSFS-${{ github.event.inputs.version }}-$(date +%y%m%d-%H%M).zip"
+              zip -r9 "$ZIPNAME" Image dtb dtbo.img 2>/dev/null || zip -r9 "$ZIPNAME" Image
+              echo "ZIPNAME=$ZIPNAME" >> $GITHUB_ENV
+            fi
 
     - name: Upload artifacts
       if: ${{ !github.event.inputs.make_draft }}
