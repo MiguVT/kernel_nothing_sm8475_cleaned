@@ -1,54 +1,61 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 1) Clean and apply vendor defconfig into out/
+export ARCH=arm64 SUBARCH=arm64
+export KBUILD_BUILD_HOST=GitHub-Actions
+export KBUILD_BUILD_USER=ci-builder
+
+# 1) Clean and apply base defconfig
 make -j1 O=out clean mrproper
 make -j1 O=out ARCH=arm64 vendor/meteoric_defconfig
 
-# 2) Configure out/.config directly
-CONFIG=out/.config
+# 2) Create config fragment (replicating ksu.config approach)
+cat > ksu_ci.config << 'EOF'
+# KernelSU-Next & SUSFS integration
+CONFIG_KSU=y
+CONFIG_KSU_SUSFS=y
+CONFIG_KSU_SUSFS_MODULE=y
+CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
 
-# KernelSU-Next & SUSFS
-./scripts/config --file $CONFIG --enable CONFIG_KSU
-./scripts/config --file $CONFIG --enable CONFIG_KSU_SUSFS
-./scripts/config --file $CONFIG --enable CONFIG_KSU_SUSFS_MODULE
-./scripts/config --file $CONFIG --enable CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT
-
-# Disable legacy 32-bit compat (~0.5 MiB)
-./scripts/config --file $CONFIG --disable CONFIG_IA32_EMULATION
-./scripts/config --file $CONFIG --disable CONFIG_COMPAT_VDSO32
-./scripts/config --file $CONFIG --disable CONFIG_COMPAT_VDSO32_X86_OLD
+# Legacy compatibility disabling
+# CONFIG_IA32_EMULATION is not set
+# CONFIG_COMPAT_VDSO32 is not set
+# CONFIG_COMPAT_VDSO32_X86_OLD is not set
 
 # Strip debug & disable module signing
-./scripts/config --file $CONFIG --disable CONFIG_DEBUG_INFO
-./scripts/config --file $CONFIG --disable CONFIG_DEBUG_KERNEL
-./scripts/config --file $CONFIG --set-val CONFIG_SYSTEM_TRUSTED_KEYS ""
-./scripts/config --file $CONFIG --disable CONFIG_MODULE_SIG
-./scripts/config --file $CONFIG --disable CONFIG_MODULE_SIG_ALL
-./scripts/config --file $CONFIG --disable CONFIG_MODULE_SIG_FORCE
+# CONFIG_DEBUG_INFO is not set
+# CONFIG_DEBUG_KERNEL is not set
+CONFIG_SYSTEM_TRUSTED_KEYS=""
+# CONFIG_MODULE_SIG is not set
+# CONFIG_MODULE_SIG_ALL is not set
+# CONFIG_MODULE_SIG_FORCE is not set
 
 # Clang ThinLTO
-./scripts/config --file $CONFIG --enable CONFIG_LTO_CLANG_THIN
-./scripts/config --file $CONFIG --set-val CONFIG_LTO_CLANG_THIN_RAMSIZE 64
+CONFIG_LTO_CLANG_THIN=y
+CONFIG_LTO_CLANG_THIN_RAMSIZE=64
 
 # Hardening sanitizers
-./scripts/config --file $CONFIG --enable CONFIG_UBSAN
-./scripts/config --file $CONFIG --enable CONFIG_UBSAN_TRAP
-./scripts/config --file $CONFIG --enable CONFIG_UBSAN_BOUNDS
-./scripts/config --file $CONFIG --enable CONFIG_UBSAN_SANITIZE_ALL
-./scripts/config --file $CONFIG --enable CONFIG_KASAN
-./scripts/config --file $CONFIG --enable CONFIG_KASAN_OUTLINE
+CONFIG_UBSAN=y
+CONFIG_UBSAN_TRAP=y
+CONFIG_UBSAN_BOUNDS=y
+CONFIG_UBSAN_SANITIZE_ALL=y
+CONFIG_KASAN=y
+CONFIG_KASAN_OUTLINE=y
 
 # Performance & tickless idle
-./scripts/config --file $CONFIG --enable CONFIG_PREEMPT_NONE
-./scripts/config --file $CONFIG --set-val CONFIG_HZ 300
-./scripts/config --file $CONFIG --enable CONFIG_NO_HZ_FULL
+CONFIG_PREEMPT_NONE=y
+CONFIG_HZ=300
+CONFIG_NO_HZ_FULL=y
 
 # Minimal subsystems
-./scripts/config --file $CONFIG --enable CONFIG_CGROUPS
-./scripts/config --file $CONFIG --enable CONFIG_NAMESPACES
-./scripts/config --file $CONFIG --disable CONFIG_FTRACE
-./scripts/config --file $CONFIG --disable CONFIG_UPROBES
+CONFIG_CGROUPS=y
+CONFIG_NAMESPACES=y
+# CONFIG_FTRACE is not set
+# CONFIG_UPROBES is not set
+EOF
 
-# 3) Finalize non-interactively in out/
-make -j1 O=out ARCH=arm64 olddefconfig KCONFIG_ALLCONFIG=$CONFIG
+# 3) Apply fragment and finalize (exactly like legacy build.sh)
+make -j1 O=out CC=clang ARCH=arm64 vendor/meteoric_defconfig ksu_ci.config savedefconfig
+
+# 4) Clean up
+rm -f ksu_ci.config
