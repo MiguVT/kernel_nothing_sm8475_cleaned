@@ -1,49 +1,63 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
 export ARCH=arm64 SUBARCH=arm64
 export KBUILD_BUILD_HOST=GitHub-Actions
 export KBUILD_BUILD_USER=ci-builder
 
-make O=out clean mrproper
-make O=out ARCH=arm64 vendor/meteoric_defconfig
+# 1) Clean and start from vendor defconfig
+make -j1 O=out clean mrproper
+make -j1 O=out ARCH=arm64 vendor/meteoric_defconfig
 
-# Append all custom configs
-printf '%s\n' \
-  "CONFIG_KSU=y" \
-  "CONFIG_KSU_SUSFS=y" \
-  "CONFIG_KSU_SUSFS_MODULE=y" \
-  "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" \
-  "" \
-  "CONFIG_IA32_EMULATION=n" \
-  "CONFIG_COMPAT_VDSO32=n" \
-  "CONFIG_COMPAT_VDSO32_X86_OLD=n" \
-  "" \
-  "CONFIG_DEBUG_INFO=n" \
-  "CONFIG_DEBUG_KERNEL=n" \
-  "CONFIG_SYSTEM_TRUSTED_KEYS=\"\"" \
-  "CONFIG_MODULE_SIG=n" \
-  "CONFIG_MODULE_SIG_ALL=n" \
-  "CONFIG_MODULE_SIG_FORCE=n" \
-  "" \
-  "CONFIG_LTO_CLANG_THIN=y" \
-  "CONFIG_LTO_CLANG_THIN_RAMSIZE=64" \
-  "" \
-  "CONFIG_UBSAN=y" \
-  "CONFIG_UBSAN_TRAP=y" \
-  "CONFIG_UBSAN_BOUNDS=y" \
-  "CONFIG_UBSAN_SANITIZE_ALL=y" \
-  "CONFIG_KASAN=y" \
-  "CONFIG_KASAN_OUTLINE=y" \
-  "" \
-  "CONFIG_PREEMPT_NONE=y" \
-  "CONFIG_HZ=300" \
-  "CONFIG_NO_HZ_FULL=y" \
-  "" \
-  "CONFIG_CGROUPS=y" \
-  "CONFIG_NAMESPACES=y" \
-  "CONFIG_FTRACE=n" \
-  "CONFIG_UPROBES=n" \
->> out/.config
+# 2) Prepare scripts/config
+#   scripts/config needs a .config in the source tree, so copy ours in
+cp out/.config .config
 
-make O=out ARCH=arm64 olddefconfig
+# 3) Enable/disable each feature
+#    KernelSU-Next & SUSFS
+./scripts/config --enable CONFIG_KSU
+./scripts/config --enable CONFIG_KSU_SUSFS
+./scripts/config --enable CONFIG_KSU_SUSFS_MODULE
+./scripts/config --enable CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT
+
+#    Legacy 32-bit compat (drop ~0.5 MiB)
+./scripts/config --disable CONFIG_IA32_EMULATION
+./scripts/config --disable CONFIG_COMPAT_VDSO32
+./scripts/config --disable CONFIG_COMPAT_VDSO32_X86_OLD
+
+#    Strip debug + disable module signing
+./scripts/config --disable CONFIG_DEBUG_INFO
+./scripts/config --disable CONFIG_DEBUG_KERNEL
+./scripts/config --set-val CONFIG_SYSTEM_TRUSTED_KEYS \"\"
+./scripts/config --disable CONFIG_MODULE_SIG
+./scripts/config --disable CONFIG_MODULE_SIG_ALL
+./scripts/config --disable CONFIG_MODULE_SIG_FORCE
+
+#    Clang ThinLTO
+./scripts/config --enable CONFIG_LTO_CLANG_THIN
+./scripts/config --set-val CONFIG_LTO_CLANG_THIN_RAMSIZE 64
+
+#    Hardening sanitizers
+./scripts/config --enable CONFIG_UBSAN
+./scripts/config --enable CONFIG_UBSAN_TRAP
+./scripts/config --enable CONFIG_UBSAN_BOUNDS
+./scripts/config --enable CONFIG_UBSAN_SANITIZE_ALL
+./scripts/config --enable CONFIG_KASAN
+./scripts/config --enable CONFIG_KASAN_OUTLINE
+
+#    Performance & tickless idle
+./scripts/config --enable CONFIG_PREEMPT_NONE
+./scripts/config --set-val CONFIG_HZ 300
+./scripts/config --enable CONFIG_NO_HZ_FULL
+
+#    Minimal subsystems
+./scripts/config --enable CONFIG_CGROUPS
+./scripts/config --enable CONFIG_NAMESPACES
+./scripts/config --disable CONFIG_FTRACE
+./scripts/config --disable CONFIG_UPROBES
+
+# 4) Finalize config non-interactively
+make -j1 O=out ARCH=arm64 olddefconfig
+
+# 5) Copy back
+cp .config out/.config
