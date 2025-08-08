@@ -39,7 +39,8 @@ jobs:
           clang \
           lld \
           llvm \
-          zstd
+          zstd \
+          binutils-aarch64-linux-gnu
 
     - name: Setup KernelSU-Next
       run: |
