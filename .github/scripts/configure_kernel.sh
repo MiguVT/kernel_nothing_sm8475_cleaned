@@ -54,7 +54,7 @@ CONFIG_KASAN=n
 EOF
 
 # 2. Start with base defconfig
-make O="${OUTDIR}" ARCH=arm64 "${BASE_DEFCONFIG}"
+make O="${OUTDIR}" ARCH=arm64 vendor/meteoric_defconfig
 
 # 3. Merge fragment using proper method
 ./scripts/kconfig/merge_config.sh -m -O "${OUTDIR}" "${BASE_DEFCONFIG}" "${FRAGMENT}"
