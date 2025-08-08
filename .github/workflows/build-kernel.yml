@@ -10,7 +10,7 @@ on:
         type: string
       make_draft:
         description: 'Create release draft instead of artifact?'
-        required: false
+        required: true
         default: false
         type: boolean
 
