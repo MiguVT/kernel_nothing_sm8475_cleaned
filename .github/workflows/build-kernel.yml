@@ -6,7 +6,7 @@ on:
       version:
         description: 'Version tag for the release'
         required: true
-        default: 'v1.0.0'
+        default: 'Snapshot'
         type: string
       make_draft:
         description: 'Create release draft instead of artifact?'
@@ -70,7 +70,9 @@ jobs:
           echo "$NEUTRON_DIR/bin" >> $GITHUB_PATH
 
       - name: Configure kernel
-        run: ./.github/scripts/configure_kernel.sh
+        run: |
+          chmod +x .github/scripts/configure_kernel.sh
+          ./.github/scripts/configure_kernel.sh
 
       - name: Compile kernel
         run: |
