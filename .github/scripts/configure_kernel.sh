@@ -124,8 +124,12 @@ CONFIG_BATTERY_BCL=y
 CONFIG_QTI_QBG=y
 EOF
 
-# 3. Non-interactive merge and final save
-export KCONFIG_ALLCONFIG=ksu_ci.config
-make -j1 O=out ARCH=$ARCH olddefconfig
-make -j1 O=out CC=clang ARCH=$ARCH savedefconfig
+# 3. Point the build at your allconfig and run non-interactive olddefconfig
+export KCONFIG_ALLCONFIG=$(pwd)/ksu_ci.config
+make -j1 O=out ARCH=$ARCH LLVM=1 LLVM_IAS=1 olddefconfig
+
+# 4. Produce the minimized .config
+make -j1 O=out ARCH=$ARCH CC=clang LLVM=1 LLVM_IAS=1 savedefconfig
+
+# 5. Cleanup
 rm -f ksu_ci.config
