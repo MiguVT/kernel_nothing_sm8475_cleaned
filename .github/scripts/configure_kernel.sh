@@ -48,7 +48,6 @@ REQ_Y=(
   CONFIG_KSU_LSM_SECURITY_HOOKS
   CONFIG_KSU_WITH_KPROBES
   CONFIG_KSU_SUSFS_SPOOF_UNAME
-  CONFIG_KSU_SUSFS_SUS_OVERLAYFS
   CONFIG_OVERLAY_FS
   CONFIG_OVERLAY_FS_REDIRECT_DIR
   CONFIG_TMPFS_XATTR
@@ -74,6 +73,13 @@ if [ ${#MISSING[@]} -gt 0 ]; then
     fi
     FILTERED+=("$m")
   done
+  if printf '%s\n' "${FILTERED[@]}" | grep -Eq 'CONFIG_MODULES|CONFIG_KPROBES'; then
+    echo "---- Diagnostic (tail of merged .config around MODULES/KPROBES) ----" >&2
+    grep -nE 'CONFIG_MODULES|CONFIG_KPROBES' out/.config | tail -20 >&2 || true
+    echo "-------------------------------------------------------------------" >&2
+    echo "Fragments applied:" >&2
+    for f in "${FRAGS[@]}"; do echo "== $f ==" >&2; grep -E 'CONFIG_MODULES|CONFIG_KPROBES' "$f" >&2 || true; done
+  fi
   if [ ${#FILTERED[@]} -gt 0 ]; then
     echo "ERROR: Missing required options: ${FILTERED[*]}" >&2
     exit 2
