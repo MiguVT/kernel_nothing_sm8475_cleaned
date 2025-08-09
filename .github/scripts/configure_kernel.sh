@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-only
 #
 # configure_kernel.sh
 # Robust configuration merger & enforcement for KernelSU + SUSFS on
@@ -17,6 +18,9 @@
 #   OUT_DIR=out            : output dir
 #   MAKEJ=<n>              : parallel jobs for make (default 8)
 #   EXTRA_FRAGMENTS="a b"  : optional extra fragment paths
+#
+# Copyright (C) 2025 MiguVT
+# Author: MiguVT
 #
 set -euo pipefail
 
