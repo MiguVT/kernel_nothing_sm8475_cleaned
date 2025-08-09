@@ -30,6 +30,10 @@ jobs:
     permissions:
       contents: write
       actions: read
+    env:
+      OUT_DIR: out
+      KERNEL_DEFCONFIG: vendor/meteoric_defconfig
+      MAKEJ: 16  # parallelism for defconfig + light config operations (compile uses nproc)
     steps:
       - name: Checkout kernel source
         uses: actions/checkout@v4
@@ -57,6 +61,9 @@ jobs:
             zstd \
             ccache \
             binutils-aarch64-linux-gnu \
+            zip \
+            python3 \
+            xz-utils \
             ca-certificates
 
       - name: Cache Neutron toolchain
@@ -171,11 +178,27 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x .github/scripts/configure_kernel.sh
-          ./.github/scripts/configure_kernel.sh
+          echo "Invoking configure_kernel.sh (debug=${KSU_DEBUG_BUILD})"
+          time ./.github/scripts/configure_kernel.sh
           echo "Showing KernelSU related symbols in final .config:" || true
           grep -E '^(CONFIG_KSU|CONFIG_KSU_SUSFS|CONFIG_KSU_SUSFS_|CONFIG_OVERLAY_FS|CONFIG_TMPFS_|CONFIG_KALLSYMS|CONFIG_KPROBES|CONFIG_LSM=)' out/.config || true
           echo "Fragment hashes:"; cat out/fragment_hashes.txt || true
           echo "Symbol report:"; cat out/ksu_susfs_symbols.txt || true
+          if [ -f out/.enforce_fragment.config ]; then
+            echo "Enforcement fragment was generated (indicates initial missing symbols).";
+            sed -e 's/^/ENFORCE: /' out/.enforce_fragment.config;
+          fi
+
+      - name: Post-config sanity checks
+        run: |
+          set -euo pipefail
+          REQUIRED=(CONFIG_KSU CONFIG_KSU_SUSFS CONFIG_KPROBES CONFIG_MODULES CONFIG_OVERLAY_FS CONFIG_KALLSYMS CONFIG_SECURITYFS)
+            for config_symbol in "${REQUIRED[@]}"; do
+              if ! grep -q "^${config_symbol}=y" out/.config; then
+                echo "[FATAL] Required symbol ${config_symbol} missing in final .config" >&2; exit 1; fi; done
+          if ! grep -q '^CONFIG_LSM=".*kernelsu.*"' out/.config; then
+            echo "[FATAL] CONFIG_LSM missing kernelsu entry" >&2; exit 1; fi
+          echo "All required symbols present."
 
       - name: Build kernel
         run: |
@@ -270,6 +293,9 @@ jobs:
             out/.config
             out/ksu_savedefconfig
             out/base_original_defconfig
+            out/merged_after_first_pass.config
+            out/merged_after_enforcement.config
+            out/.enforce_fragment.config
             out/ksu_focused_diff.txt
             out/ksu_susfs_symbols.txt
             out/fragment_hashes.txt
@@ -285,6 +311,9 @@ jobs:
             out/.config
             out/ksu_savedefconfig
             out/base_original_defconfig
+            out/merged_after_first_pass.config
+            out/merged_after_enforcement.config
+            out/.enforce_fragment.config
             out/ksu_focused_diff.txt
             out/ksu_susfs_symbols.txt
             out/fragment_hashes.txt
@@ -302,6 +331,9 @@ jobs:
             out/ksu_focused_diff.txt
             out/ksu_susfs_symbols.txt
             out/fragment_hashes.txt
+            out/merged_after_first_pass.config
+            out/merged_after_enforcement.config
+            out/.enforce_fragment.config
           retention-days: 7
 
       - name: Create Release
