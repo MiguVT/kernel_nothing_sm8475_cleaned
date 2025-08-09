@@ -55,29 +55,36 @@ jobs:
         KERNEL_REPO="$GITHUB_WORKSPACE"
 
         # Copy patches to correct locations
-        # cp susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch $KERNEL_REPO/KernelSU-Next/
         cp susfs4ksu/kernel_patches/50_add_susfs_in_*.patch $KERNEL_REPO/
 
         # Copy SUSFS source files
         cp -r susfs4ksu/kernel_patches/fs/* $KERNEL_REPO/fs/
         cp -r susfs4ksu/kernel_patches/include/linux/* $KERNEL_REPO/include/linux/
 
-        # Install SUSFS module into KernelSU-Next Disabled cause CONFIG_KSU_SUSFS_MODULE works better.
-        # mkdir -p $KERNEL_REPO/KernelSU-Next/ksu_module_susfs
-        # cp -r susfs4ksu/ksu_module_susfs/* $KERNEL_REPO/KernelSU-Next/ksu_module_susfs/
-
-        # echo "Applying 10_enable_susfs_for_ksu.patch in KernelSU-Next root..."
-        # cd $KERNEL_REPO/KernelSU-Next
-        # patch -p1 < 10_enable_susfs_for_ksu.patch
-
         echo "Applying 50_add_susfs_in_ patch in kernel root..."
         cd $KERNEL_REPO
         patch -p1 < 50_add_susfs_in_*.patch || exit 1
 
-        # Cleanup
-        rm -rf susfs4ksu
-
         echo "SUSFS patches applied successfully"
+
+    - name: Build SUSFS userspace tools
+      run: |
+        echo "Building ksu_susfs userspace tool..."
+        cd susfs4ksu
+        
+        # Build the userspace tool
+        chmod +x build_ksu_susfs_tool.sh
+        ./build_ksu_susfs_tool.sh
+        
+        # Verify that the tool was built successfully
+        if [ ! -f "ksu_module_susfs/tools/ksu_susfs_arm64" ]; then
+          echo "❌ Failed to build ksu_susfs tool!"
+          exit 1
+        fi
+        
+        echo "✅ ksu_susfs tool built successfully"
+        ls -la ksu_module_susfs/tools/
+        cd ..
 
     - name: Setup toolchain
       run: |
@@ -92,7 +99,6 @@ jobs:
       run: |
         chmod +x .github/scripts/configure_kernel.sh
         ./.github/scripts/configure_kernel.sh
-
 
     - name: Build kernel
       run: |
@@ -134,11 +140,31 @@ jobs:
         cp out/arch/arm64/boot/dtb kernel_output/ 2>/dev/null || true
         cp out/arch/arm64/boot/dtbo.img kernel_output/ 2>/dev/null || true
 
+        # Include SUSFS userspace tools
+        echo "Including SUSFS userspace tools..."
+        mkdir -p kernel_output/susfs_tools
+        cp susfs4ksu/ksu_module_susfs/tools/ksu_susfs_arm64 kernel_output/susfs_tools/ksu_susfs 2>/dev/null || true
+
         # Create AnyKernel3 package if available
         if [ -d "anykernel" ]; then
           cp out/arch/arm64/boot/Image anykernel/
           cp out/arch/arm64/boot/dtb anykernel/ 2>/dev/null || true
           cp out/arch/arm64/boot/dtbo.img anykernel/ 2>/dev/null || true
+          
+          # Add SUSFS userspace tool to AnyKernel3
+          mkdir -p anykernel/susfs_tools
+          cp susfs4ksu/ksu_module_susfs/tools/ksu_susfs_arm64 anykernel/susfs_tools/ksu_susfs 2>/dev/null || true
+          
+          # Modify anykernel.sh to install the tool automatically
+          if [ -f "anykernel/anykernel.sh" ]; then
+            echo "" >> anykernel/anykernel.sh
+            echo "# Install SUSFS userspace tool" >> anykernel/anykernel.sh  
+            echo 'ui_print "Installing SUSFS userspace tool..."' >> anykernel/anykernel.sh
+            echo 'mkdir -p /data/adb/ksu/bin' >> anykernel/anykernel.sh
+            echo 'cp $home/susfs_tools/ksu_susfs /data/adb/ksu/bin/ksu_susfs' >> anykernel/anykernel.sh
+            echo 'chmod 755 /data/adb/ksu/bin/ksu_susfs' >> anykernel/anykernel.sh
+            echo 'ui_print "SUSFS userspace tool installed successfully"' >> anykernel/anykernel.sh
+          fi
 
           cd anykernel
           ZIPNAME="Meteoric-KernelSU-Next-SUSFS-${{ github.event.inputs.version }}-$(date +%y%m%d-%H%M).zip"
@@ -146,12 +172,16 @@ jobs:
           cd ..
           echo "ZIPNAME=$ZIPNAME" >> $GITHUB_ENV
         else
-          # Create basic zip
+          # Create basic zip with susfs tools
           cd kernel_output
           ZIPNAME="Meteoric-KernelSU-Next-SUSFS-${{ github.event.inputs.version }}-$(date +%y%m%d-%H%M).zip"
-          zip -r9 "$ZIPNAME" Image dtb dtbo.img 2>/dev/null || zip -r9 "$ZIPNAME" Image
+          zip -r9 "$ZIPNAME" Image dtb dtbo.img susfs_tools 2>/dev/null || zip -r9 "$ZIPNAME" Image susfs_tools
           echo "ZIPNAME=$ZIPNAME" >> $GITHUB_ENV
         fi
+
+        # Cleanup after using the tools
+        rm -rf susfs4ksu
+        echo "Cleanup completed"
 
     - name: Upload artifacts
       if: ${{ !github.event.inputs.make_draft }}
@@ -163,6 +193,7 @@ jobs:
           kernel_output/Image
           kernel_output/dtb
           kernel_output/dtbo.img
+          kernel_output/susfs_tools
         retention-days: 30
 
     - name: Create Release
@@ -177,6 +208,7 @@ jobs:
           **Features:**
           - KernelSU-Next integration for advanced root management
           - SUSFS (SuFS) for comprehensive root hiding at kernel level
+          - Includes ksu_susfs userspace tool for full functionality
           - Compatible with Nothing Phone 2 (SM8475)
 
           **Installation:**
@@ -185,11 +217,18 @@ jobs:
 
           **KernelSU Manager:**
           - Install KernelSU-Next Manager APK
-          - SUSFS features available through ksu_susfs tool
+          - SUSFS features available through ksu_susfs tool (automatically installed)
+          - Applications will now receive root access correctly
+
+          **What's Fixed:**
+          - Included ksu_susfs userspace tool for proper app root functionality
+          - Automatic installation of SUSFS tools during kernel flash
+          - Full KernelSU-Next + SUSFS integration
 
           **Changelog:**
           - Updated to latest KernelSU-Next
           - Integrated SUSFS patches for enhanced root hiding
+          - Added ksu_susfs userspace tool compilation and installation
           - Optimized build configuration
 
         files: |
