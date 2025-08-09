@@ -13,251 +13,318 @@ on:
         required: true
         default: false
         type: boolean
+      debug_build:
+        description: 'Enable debug / sanitizers (KSU_DEBUG_BUILD=1)?'
+        required: false
+        default: '0'
+        type: choice
+        options: ['0', '1']
+
+concurrency:
+  group: meteoric-kernel-${{ github.ref }}-${{ github.event.inputs.debug_build }}
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      actions: read
     steps:
-    - name: Checkout kernel source
-      uses: actions/checkout@v4
+      - name: Checkout kernel source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
-    - name: Setup build environment
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          build-essential \
-          bc \
-          git \
-          curl \
-          libncurses-dev \
-          bison \
-          flex \
-          libssl-dev \
-          libelf-dev \
-          clang \
-          lld \
-          llvm \
-          zstd \
-          binutils-aarch64-linux-gnu
+      - name: Setup build environment
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            bc \
+            git \
+            curl \
+            libncurses-dev \
+            bison \
+            flex \
+            libssl-dev \
+            libelf-dev \
+            clang \
+            lld \
+            llvm \
+            zstd \
+            ccache \
+            binutils-aarch64-linux-gnu \
+            ca-certificates
 
-    - name: Setup KernelSU-Next
-      run: |
-        echo "Setting up KernelSU-Next..."
-        curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/next-susfs/kernel/setup.sh" | bash -s next-susfs
+      - name: Cache Neutron toolchain
+        id: cache-toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/toolchain/neutron-clang
+          key: neutron-clang-${{ runner.os }}-${{ hashFiles('.github/workflows/build-kernel.yml') }}
 
-    - name: Clone and apply SUSFS patches
-      run: |
-        echo "Cloning susfs4ksu repository (latest branch commit)..."
-        git clone https://gitlab.com/simonpunk/susfs4ksu.git --branch gki-android12-5.10 --depth=1
+      - name: Cache ccache
+        id: cache-ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-${{ runner.os }}-${{ github.ref_name }}-${{ hashFiles('.github/config-fragments/*.config') }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ github.ref_name }}-
+            ccache-${{ runner.os }}-
 
-        KERNEL_REPO="$GITHUB_WORKSPACE"
+      - name: Setup toolchain (if cache miss)
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          echo "Setting up Neutron toolchain..."
+          mkdir -p ~/toolchain/neutron-clang
+          cd ~/toolchain/neutron-clang
+          curl -sL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman -o antman
+          chmod +x antman
+          ./antman -S
+          rm -f antman
+          echo "Toolchain files:"
+          ls -1 | head -n 20
 
-        # Copy patches to correct locations
-        cp susfs4ksu/kernel_patches/50_add_susfs_in_*.patch $KERNEL_REPO/
+      - name: Cache Android NDK
+        id: cache-ndk
+        uses: actions/cache@v4
+        with:
+          path: android-ndk-r25c
+          key: ndk-r25c-${{ runner.os }}
 
-        # Copy SUSFS source files
-        cp -r susfs4ksu/kernel_patches/fs/* $KERNEL_REPO/fs/
-        cp -r susfs4ksu/kernel_patches/include/linux/* $KERNEL_REPO/include/linux/
+      - name: Setup Android NDK
+        if: steps.cache-ndk.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          echo "Downloading Android NDK r25c..."
+          wget -q https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+          sha256sum android-ndk-r25c-linux.zip > ndk_download.sha256
+          echo "NDK archive SHA256:"; cat ndk_download.sha256
+          unzip -q android-ndk-r25c-linux.zip
+          rm android-ndk-r25c-linux.zip
 
-        echo "Applying 50_add_susfs_in_ patch in kernel root..."
-        cd $KERNEL_REPO
-        patch -p1 < 50_add_susfs_in_*.patch || exit 1
+      - name: Export tool paths
+        run: |
+          set -euo pipefail
+          echo "ANDROID_NDK_HOME=$GITHUB_WORKSPACE/android-ndk-r25c" >> $GITHUB_ENV
+          echo "$GITHUB_WORKSPACE/android-ndk-r25c" >> $GITHUB_PATH
+          echo "~/toolchain/neutron-clang/bin" >> $GITHUB_PATH
+          echo "CCACHE_DIR=$GITHUB_WORKSPACE/.ccache" >> $GITHUB_ENV
+          echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE" >> $GITHUB_ENV
+          echo "CCACHE_COMPRESS=1" >> $GITHUB_ENV
+          echo "CCACHE_MAXSIZE=2G" >> $GITHUB_ENV
 
-        echo "SUSFS patches applied successfully"
+      - name: Setup KernelSU-Next
+        run: |
+          set -euo pipefail
+          echo "Setting up KernelSU-Next..."
+          KSUNEXT_BRANCH=next-susfs
+          curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/${KSUNEXT_BRANCH}/kernel/setup.sh" -o setup.sh
+          grep -q "KernelSU" setup.sh || { echo "Unexpected setup.sh content" >&2; exit 1; }
+          bash setup.sh "$KSUNEXT_BRANCH"
+          rm -f setup.sh
+          # Verify KernelSU sources applied
+          grep -R "KernelSU" -n kernel > /dev/null || { echo "KernelSU markers missing in kernel/" >&2; exit 1; }
 
-    - name: Setup Android NDK
-      run: |
-        echo "Setting up Android NDK for SUSFS userspace tools..."
+      - name: Clone and apply SUSFS patches
+        run: |
+          set -euo pipefail
+          echo "Cloning susfs4ksu repository (latest branch commit)..."
+          git clone https://gitlab.com/simonpunk/susfs4ksu.git --branch gki-android12-5.10 --depth=1
+          KERNEL_REPO="$GITHUB_WORKSPACE"
+          cd "$KERNEL_REPO"
+          cp susfs4ksu/kernel_patches/50_add_susfs_in_*.patch .
+          PATCH_FILE=$(ls 50_add_susfs_in_*.patch | head -n1)
+          echo "Applying $PATCH_FILE ..."
+          patch -p1 < "$PATCH_FILE"
+          echo "SUSFS patch applied successfully"
+          cp -r susfs4ksu/kernel_patches/fs/* fs/
+          cp -r susfs4ksu/kernel_patches/include/linux/* include/linux/
 
-        # Download and install Android NDK
-        NDK_VERSION="25.2.9519653"
-        wget -q https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
-        unzip -q android-ndk-r25c-linux.zip
+      - name: Build SUSFS userspace tools
+        run: |
+          set -euo pipefail
+          echo "Building ksu_susfs userspace tool..."
+          cd susfs4ksu
+          chmod +x build_ksu_susfs_tool.sh
+          ./build_ksu_susfs_tool.sh
+          test -f ksu_module_susfs/tools/ksu_susfs_arm64 || { echo "ksu_susfs tool build failed" >&2; exit 1; }
+          ls -l ksu_module_susfs/tools/
 
-        # Set up NDK paths
-        export ANDROID_NDK_HOME="$GITHUB_WORKSPACE/android-ndk-r25c"
-        export PATH="$ANDROID_NDK_HOME:$PATH"
+      - name: Configure and Optimize Kernel
+        env:
+          KSU_DEBUG_BUILD: ${{ github.event.inputs.debug_build }}
+        run: |
+          set -euo pipefail
+          chmod +x .github/scripts/configure_kernel.sh
+          ./.github/scripts/configure_kernel.sh
+          echo "Showing KernelSU related symbols in final .config:" || true
+          grep -E '^(CONFIG_KSU|CONFIG_KSU_SUSFS|CONFIG_KSU_SUSFS_|CONFIG_OVERLAY_FS|CONFIG_TMPFS_|CONFIG_KALLSYMS|CONFIG_KPROBES|CONFIG_LSM=)' out/.config || true
+          echo "Fragment hashes:"; cat out/fragment_hashes.txt || true
+          echo "Symbol report:"; cat out/ksu_susfs_symbols.txt || true
 
-        # Verify ndk-build is available
-        ls -la $ANDROID_NDK_HOME/ndk-build
+      - name: Build kernel
+        run: |
+          set -euo pipefail
+          export ARCH=arm64 SUBARCH=arm64 KBUILD_BUILD_HOST=GitHub-Actions KBUILD_BUILD_USER=ci-builder
+          export PROCS=$(nproc) LD=ld.lld
+          export CC="ccache clang"
+          ccache -s || true
+          echo "Starting kernel compilation..."
+          make -j"$PROCS" O=out ARCH=arm64 \
+               LLVM=1 LLVM_IAS=1 \
+               CLANG_TRIPLE=aarch64-linux-gnu- \
+               CROSS_COMPILE=aarch64-linux-android- \
+               CROSS_COMPILE_COMPAT=arm-linux-androideabi- \
+               AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump \
+               STRIP=llvm-strip LD=ld.lld \
+               CC="ccache clang" 2>&1 | tee out/build.log
+          test -f out/arch/arm64/boot/Image || { echo "Kernel compilation failed" >&2; exit 1; }
+          echo "Kernel compiled successfully"
+          ccache -s || true
 
-        # Add NDK to environment for subsequent steps
-        echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> $GITHUB_ENV
-        echo "$ANDROID_NDK_HOME" >> $GITHUB_PATH
+      - name: Install modules
+        run: |
+          set -euo pipefail
+          export ARCH=arm64 SUBARCH=arm64
+          make -j1 O=out modules_install INSTALL_MOD_PATH=out/modules || true
+          find out/modules -maxdepth 4 -type f -name "*.ko" -print || echo "No modules installed"
 
-    - name: Build SUSFS userspace tools
-      run: |
-        echo "Building ksu_susfs userspace tool..."
-        cd susfs4ksu
-
-        # Verify NDK is available
-        echo "NDK location: $ANDROID_NDK_HOME"
-        which ndk-build || echo "ndk-build not found in PATH"
-
-        # Build the userspace tool
-        chmod +x build_ksu_susfs_tool.sh
-        ./build_ksu_susfs_tool.sh
-
-        # Verify that the tool was built successfully
-        if [ ! -f "ksu_module_susfs/tools/ksu_susfs_arm64" ]; then
-          echo "❌ Failed to build ksu_susfs tool!"
-          exit 1
-        fi
-
-        echo "✅ ksu_susfs tool built successfully"
-        ls -la ksu_module_susfs/tools/
-        cd ..
-
-    - name: Setup toolchain
-      run: |
-        echo "Setting up Neutron toolchain..."
-        mkdir -p ~/toolchain/neutron-clang
-        cd ~/toolchain/neutron-clang
-        curl -sL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman -o antman
-        chmod +x antman && ./antman -S
-        echo "~/toolchain/neutron-clang/bin" >> $GITHUB_PATH
-
-    - name: Configure and Optimize Kernel
-      run: |
-        chmod +x .github/scripts/configure_kernel.sh
-        ./.github/scripts/configure_kernel.sh
-
-    - name: Build kernel
-      run: |
-        export ARCH=arm64
-        export SUBARCH=arm64
-        export KBUILD_BUILD_HOST=GitHub-Actions
-        export KBUILD_BUILD_USER=ci-builder
-        export PROCS=$(nproc)
-        export LD=ld.lld
-
-        echo "Starting kernel compilation..."
-
-        make -j$PROCS O=out ARCH=arm64 \
-             LLVM=1 LLVM_IAS=1 \
-             CLANG_TRIPLE=aarch64-linux-gnu- \
-             CROSS_COMPILE=aarch64-linux-android- \
-             CROSS_COMPILE_COMPAT=arm-linux-androideabi- \
-             AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump \
-             STRIP=llvm-strip LD=ld.lld \
-             CC=clang \
-             2>&1 | tee out/build.log
-
-        if [ ! -f out/arch/arm64/boot/Image ]; then
-          echo "Kernel compilation failed!"
-          exit 1
-        fi
-
-        echo "Kernel compiled successfully"
-
-    - name: Package kernel
-      run: |
-        echo "Packaging kernel..."
-
-        # Create output directory
-        mkdir -p kernel_output
-
-        # Copy kernel components
-        cp out/arch/arm64/boot/Image kernel_output/
-        cp out/arch/arm64/boot/dtb kernel_output/ 2>/dev/null || true
-        cp out/arch/arm64/boot/dtbo.img kernel_output/ 2>/dev/null || true
-
-        # Include SUSFS userspace tools
-        echo "Including SUSFS userspace tools..."
-        mkdir -p kernel_output/susfs_tools
-        cp susfs4ksu/ksu_module_susfs/tools/ksu_susfs_arm64 kernel_output/susfs_tools/ksu_susfs 2>/dev/null || true
-
-        # Create AnyKernel3 package if available
-        if [ -d "anykernel" ]; then
-          cp out/arch/arm64/boot/Image anykernel/
-          cp out/arch/arm64/boot/dtb anykernel/ 2>/dev/null || true
-          cp out/arch/arm64/boot/dtbo.img anykernel/ 2>/dev/null || true
-          
-          # Add SUSFS userspace tool to AnyKernel3
-          mkdir -p anykernel/susfs_tools
-          cp susfs4ksu/ksu_module_susfs/tools/ksu_susfs_arm64 anykernel/susfs_tools/ksu_susfs 2>/dev/null || true
-          
-          # Modify anykernel.sh to install the tool automatically
-          if [ -f "anykernel/anykernel.sh" ]; then
-            echo "" >> anykernel/anykernel.sh
-            echo "# Install SUSFS userspace tool" >> anykernel/anykernel.sh  
-            echo 'ui_print "Installing SUSFS userspace tool..."' >> anykernel/anykernel.sh
-            echo 'mkdir -p /data/adb/ksu/bin' >> anykernel/anykernel.sh
-            echo 'cp $home/susfs_tools/ksu_susfs /data/adb/ksu/bin/ksu_susfs' >> anykernel/anykernel.sh
-            echo 'chmod 755 /data/adb/ksu/bin/ksu_susfs' >> anykernel/anykernel.sh
-            echo 'ui_print "SUSFS userspace tool installed successfully"' >> anykernel/anykernel.sh
+      - name: Package kernel
+        run: |
+          set -euo pipefail
+          echo "Packaging kernel..."
+          mkdir -p kernel_output
+          cp out/arch/arm64/boot/Image kernel_output/
+          cp out/arch/arm64/boot/dtb kernel_output/ 2>/dev/null || true
+          cp out/arch/arm64/boot/dtbo.img kernel_output/ 2>/dev/null || true
+          echo "Including SUSFS userspace tools..."
+          mkdir -p kernel_output/susfs_tools
+          cp susfs4ksu/ksu_module_susfs/tools/ksu_susfs_arm64 kernel_output/susfs_tools/ksu_susfs 2>/dev/null || true
+          echo "Including built modules (if any)..."
+          if [ -d out/modules/lib/modules ]; then
+            cp -r out/modules/lib/modules kernel_output/
           fi
+          if [ -d "anykernel" ]; then
+            cp out/arch/arm64/boot/Image anykernel/
+            cp out/arch/arm64/boot/dtb anykernel/ 2>/dev/null || true
+            cp out/arch/arm64/boot/dtbo.img anykernel/ 2>/dev/null || true
+            mkdir -p anykernel/susfs_tools
+            cp susfs4ksu/ksu_module_susfs/tools/ksu_susfs_arm64 anykernel/susfs_tools/ksu_susfs 2>/dev/null || true
+            if [ -f "anykernel/anykernel.sh" ]; then
+              {
+                echo ''
+                echo '# Install SUSFS userspace tool'
+                echo 'ui_print "Installing SUSFS userspace tool..."'
+                echo 'mkdir -p /data/adb/ksu/bin'
+                echo 'cp $home/susfs_tools/ksu_susfs /data/adb/ksu/bin/ksu_susfs'
+                echo 'chmod 755 /data/adb/ksu/bin/ksu_susfs'
+                echo 'ui_print "SUSFS userspace tool installed successfully"'
+              } >> anykernel/anykernel.sh
+            fi
+            if [ -d out/modules/lib/modules ]; then
+              mkdir -p anykernel/modules
+              cp -r out/modules/lib/modules anykernel/modules/
+            fi
+            cd anykernel
+            ZIPNAME="Meteoric-KernelSU-Next-SUSFS-${{ github.event.inputs.version }}-$(date +%y%m%d-%H%M).zip"
+            zip -r9 "../kernel_output/$ZIPNAME" *
+            cd ..
+            echo "ZIPNAME=$ZIPNAME" >> $GITHUB_ENV
+          else
+            cd kernel_output
+            ZIPNAME="Meteoric-KernelSU-Next-SUSFS-${{ github.event.inputs.version }}-$(date +%y%m%d-%H%M).zip"
+            (zip -r9 "$ZIPNAME" Image dtb dtbo.img susfs_tools modules 2>/dev/null || zip -r9 "$ZIPNAME" Image susfs_tools modules 2>/dev/null || zip -r9 "$ZIPNAME" Image susfs_tools)
+            echo "ZIPNAME=$ZIPNAME" >> $GITHUB_ENV
+          fi
+          # Clean source additions repo
+          rm -rf susfs4ksu
+          echo "Cleanup completed"
 
-          cd anykernel
-          ZIPNAME="Meteoric-KernelSU-Next-SUSFS-${{ github.event.inputs.version }}-$(date +%y%m%d-%H%M).zip"
-          zip -r9 "../kernel_output/$ZIPNAME" *
-          cd ..
-          echo "ZIPNAME=$ZIPNAME" >> $GITHUB_ENV
-        else
-          # Create basic zip with susfs tools
-          cd kernel_output
-          ZIPNAME="Meteoric-KernelSU-Next-SUSFS-${{ github.event.inputs.version }}-$(date +%y%m%d-%H%M).zip"
-          zip -r9 "$ZIPNAME" Image dtb dtbo.img susfs_tools 2>/dev/null || zip -r9 "$ZIPNAME" Image susfs_tools
-          echo "ZIPNAME=$ZIPNAME" >> $GITHUB_ENV
-        fi
+      - name: Upload artifacts (main)
+        if: ${{ !github.event.inputs.make_draft }}
+        uses: actions/upload-artifact@26f96dfa697d77e81fd5907df203aa23a56210a8 # v4.3.3 pinned
+        with:
+          name: meteoric-kernelsu-next-susfs-${{ github.event.inputs.version }}
+          path: |
+            kernel_output/*.zip
+            kernel_output/Image
+            kernel_output/dtb
+            kernel_output/dtbo.img
+            kernel_output/susfs_tools
+            kernel_output/modules
+            out/.config
+            out/ksu_savedefconfig
+            out/base_original_defconfig
+            out/ksu_focused_diff.txt
+            out/ksu_susfs_symbols.txt
+            out/fragment_hashes.txt
+            out/build.log
+          retention-days: 30
 
-        # Cleanup after using the tools
-        rm -rf susfs4ksu
-        echo "Cleanup completed"
+      - name: Upload artifacts (draft build logs) # ensure configs/logs retained for release draft
+        if: ${{ github.event.inputs.make_draft }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: meteoric-kernel-draft-logs-${{ github.event.inputs.version }}
+          path: |
+            out/.config
+            out/ksu_savedefconfig
+            out/base_original_defconfig
+            out/ksu_focused_diff.txt
+            out/ksu_susfs_symbols.txt
+            out/fragment_hashes.txt
+            out/build.log
+          retention-days: 10
 
-    - name: Upload artifacts
-      if: ${{ !github.event.inputs.make_draft }}
-      uses: actions/upload-artifact@v4
-      with:
-        name: meteoric-kernelsu-next-susfs-${{ github.event.inputs.version }}
-        path: |
-          kernel_output/*.zip
-          kernel_output/Image
-          kernel_output/dtb
-          kernel_output/dtbo.img
-          kernel_output/susfs_tools
-        retention-days: 30
+      - name: Always upload logs (on failure too)
+        if: always() && failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: meteoric-kernel-failure-logs-${{ github.run_id }}
+          path: |
+            out/build.log
+            out/.config
+            out/ksu_focused_diff.txt
+            out/ksu_susfs_symbols.txt
+            out/fragment_hashes.txt
+          retention-days: 7
 
-    - name: Create Release
-      if: ${{ github.event.inputs.make_draft }}
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: ${{ github.event.inputs.version }}
-        name: "Meteoric Kernel ${{ github.event.inputs.version }} - KernelSU-Next + SUSFS"
-        body: |
-          ## Meteoric Kernel ${{ github.event.inputs.version }} - Made by HELLBOY017 | Mod by MiguVT
+      - name: Create Release
+        if: ${{ github.event.inputs.make_draft }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          name: 'Meteoric Kernel ${{ github.event.inputs.version }} - KernelSU-Next + SUSFS'
+          body: |
+            ## Meteoric Kernel ${{ github.event.inputs.version }} - Made by HELLBOY017 | Mod by MiguVT
 
-          **Features:**
-          - KernelSU-Next integration for advanced root management
-          - SUSFS (SuFS) for comprehensive root hiding at kernel level
-          - Includes ksu_susfs userspace tool for full functionality
-          - Compatible with Nothing Phone 2 (SM8475)
+            **Features:**
+            - KernelSU-Next + SUSFS integration
+            - Toggle debug build via workflow input (debug_build)
+            - Exports defconfig diffs & final .config for auditing
 
-          **Installation:**
-          1. Flash the provided ZIP file via custom recovery (TWRP/OrangeFox)
-          2. Or extract boot.img and flash via fastboot: `fastboot flash boot boot.img` (Not tested, I (MiguVT) use OrangeFox) 
+            **Installation:**
+            1. Flash ZIP in custom recovery
+            2. Or extract boot.img and flash: `fastboot flash boot boot.img`
 
-          **KernelSU Manager:**
-          - Install KernelSU-Next Manager APK
-          - SUSFS features available through ksu_susfs tool (automatically installed)
-          - Applications will now receive root access correctly
+            **Manager:** Install KernelSU-Next Manager APK and grant root.
 
-          **What's Fixed:**
-          - Included ksu_susfs userspace tool for proper app root functionality
-          - Automatic installation of SUSFS tools during kernel flash
-          - Full KernelSU-Next + SUSFS integration
+            **Changelog:**
+            - Added debug build toggle
+            - Fragment-based config (kernelsu_susfs.config + perf_disable_debug.config) for clarity
+            - Config validation & artifacts (original + final + minimal)
+            - Improved SUSFS patch application & verification
+            - Added caching, pinned actions, concurrency & failure log upload
 
-          **Changelog:**
-          - Updated to latest KernelSU-Next
-          - Integrated SUSFS patches for enhanced root hiding
-          - Added ksu_susfs userspace tool compilation and installation
-          - Optimized build configuration
-
-        files: |
-          kernel_output/*.zip
-        prerelease: false
-        draft: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          files: |
+            kernel_output/*.zip
+          prerelease: false
+          draft: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

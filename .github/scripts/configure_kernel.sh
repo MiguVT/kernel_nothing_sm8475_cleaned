@@ -1,81 +1,103 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+: "${KSU_DEBUG_BUILD:=0}"
+: "${MAKEJ:=1}"
+
 export ARCH=arm64 SUBARCH=arm64
 export KBUILD_BUILD_HOST=GitHub-Actions
 export KBUILD_BUILD_USER=ci-builder
 
-make -j1 O=out clean mrproper
-make -j1 O=out ARCH=arm64 vendor/meteoric_defconfig
+# Paths
+FRAG_DIR=.github/config-fragments
+CORE_FRAG=$FRAG_DIR/kernelsu_susfs.config
+DEBUG_FRAG=$FRAG_DIR/debug_enable.config
+PERF_FRAG=$FRAG_DIR/perf_disable_debug.config
 
-cat > ksu_ci.config << 'EOF'
-#
-# ksu_ci.config – minimal overrides for Meteoric Kernel v6 (SM8475)
-#
+for f in "$CORE_FRAG" "$PERF_FRAG" "$DEBUG_FRAG"; do
+  [ -f "$f" ] || { echo "Missing fragment $f" >&2; exit 1; }
+done
 
-# ----------- KernelSU & SuSFS -----------
+# Base defconfig (mrproper already cleans tree; no need for extra 'clean')
+make -j1 O=out mrproper
+make -j"$MAKEJ" O=out ARCH=arm64 vendor/meteoric_defconfig
+cp out/.config out/base_original_defconfig || true
 
-# KernelSU Next
+# Ensure merge script
+if [ ! -x scripts/kconfig/merge_config.sh ]; then
+  echo "scripts/kconfig/merge_config.sh missing" >&2
+  exit 1
+fi
 
-CONFIG_KSU=y
-CONFIG_KSU_DEBUG=n
-CONFIG_KSU_ALLOWLIST_WORKAROUND=n
-CONFIG_KSU_LSM_SECURITY_HOOKS=y
-CONFIG_KSU_WITH_KPROBES=n
+# Build fragment list
+FRAGS=("$CORE_FRAG")
+if [ "$KSU_DEBUG_BUILD" = "1" ]; then
+  FRAGS+=("$DEBUG_FRAG")
+else
+  FRAGS+=("$PERF_FRAG")
+fi
 
-# KernelSU Next - susfs
+cp out/.config out/base_defconfig || true
+bash scripts/kconfig/merge_config.sh -m -O out out/base_defconfig "${FRAGS[@]}"
+make -j"$MAKEJ" O=out ARCH=arm64 olddefconfig
 
-CONFIG_KSU_SUSFS=y
-CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
-CONFIG_KSU_SUSFS_SUS_PATH=y
-CONFIG_KSU_SUSFS_SUS_MOUNT=y
-CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
-CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
-CONFIG_KSU_SUSFS_SUS_KSTAT=y
-CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y
-CONFIG_KSU_SUSFS_TRY_UMOUNT=y
-CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
-CONFIG_KSU_SUSFS_SPOOF_UNAME=y
-CONFIG_KSU_SUSFS_ENABLE_LOG=n
-CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
-CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
-CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+# Validation
+REQ_Y=(
+  CONFIG_KSU
+  CONFIG_KSU_SUSFS
+  CONFIG_KSU_LSM_SECURITY_HOOKS
+  CONFIG_KSU_WITH_KPROBES
+  CONFIG_KSU_SUSFS_SPOOF_UNAME
+  CONFIG_KSU_SUSFS_SUS_OVERLAYFS
+  CONFIG_OVERLAY_FS
+  CONFIG_OVERLAY_FS_REDIRECT_DIR
+  CONFIG_TMPFS_XATTR
+  CONFIG_TMPFS_POSIX_ACL
+  CONFIG_KALLSYMS
+  CONFIG_KPROBES
+  CONFIG_SECURITYFS
+  CONFIG_PID_NS
+  CONFIG_FHANDLE
+)
+MISSING=()
+for k in "${REQ_Y[@]}"; do
+  grep -q "^${k}=y" out/.config || MISSING+=("$k")
+done
+if [ ${#MISSING[@]} -gt 0 ]; then
+  echo "ERROR: Missing required options: ${MISSING[*]}" >&2
+  exit 2
+fi
+if ! grep -E '^CONFIG_LSM=".*kernelsu.*"' out/.config >/dev/null; then
+  echo "ERROR: CONFIG_LSM missing kernelsu" >&2
+  exit 3
+fi
+if [ "$KSU_DEBUG_BUILD" != "1" ]; then
+  for dbg in CONFIG_KASAN CONFIG_UBSAN CONFIG_KFENCE CONFIG_DEBUG_INFO CONFIG_SCHEDSTATS; do
+    if grep -q "^${dbg}=y" out/.config; then
+      echo "ERROR: Debug option still enabled in non-debug build: $dbg" >&2
+      exit 4
+    fi
+  done
+fi
 
-# Make sure OverlayFS is on
-CONFIG_OVERLAY_FS=y
-# ------------ OPTIMIZATIONS ------------
+# Output summaries
+echo "==== KernelSU / SUSFS Summary ===="
+grep -E '^(CONFIG_KSU|CONFIG_KSU_SUSFS|CONFIG_KSU_SUSFS_|CONFIG_OVERLAY_FS|CONFIG_TMPFS_|CONFIG_KALLSYMS|CONFIG_KPROBES|CONFIG_LSM=)' out/.config || true
 
-# Project Matrixx scheduler & performance
-CONFIG_CASS_SCHED=y
-CONFIG_SCHED_TUNE=y
-CONFIG_SCHED_BOOST=y
-CONFIG_CPU_INPUT_BOOST=y
-CONFIG_CPU_INPUT_BOOST_DURATION_MS=150
-CONFIG_CPU_INPUT_BOOST_FREQ_LP=1248000
-CONFIG_CPU_INPUT_BOOST_FREQ_PERF=2304000
-CONFIG_HZ=300
+# Write focused symbol report
+grep -E '^(CONFIG_KSU|CONFIG_KSU_SUSFS|CONFIG_KSU_SUSFS_|CONFIG_OVERLAY_FS|CONFIG_TMPFS_|CONFIG_KALLSYMS|CONFIG_KPROBES|CONFIG_LSM=)' out/.config > out/ksu_susfs_symbols.txt || true
 
-# Tickless power-saving
-CONFIG_NO_HZ_FULL=y
-CONFIG_NO_HZ_IDLE=y
+# Record fragment hashes for reproducibility
+sha256sum "$CORE_FRAG" "$PERF_FRAG" "$DEBUG_FRAG" > out/fragment_hashes.txt 2>/dev/null || true
 
-# ZRAM built-in for swap
-CONFIG_ZRAM=y
-CONFIG_ZRAM_DEF_COMP_LZ4=y
-CONFIG_FRONTSWAP=y
+echo "==== Focused Diff (base vs final) ===="
+set -o pipefail || true
+( diff -u out/base_original_defconfig out/.config || true ) | grep -E 'KSU|SUSFS|OVERLAY_FS|KALLSYMS|KPROBE|UBSAN|KASAN|KFENCE|DEBUG_INFO|SCHEDSTATS|CONFIG_LSM' | tee out/ksu_focused_diff.txt || true
+set +o pipefail || true
 
-# Enforce BBR as default TCP congestion  
-CONFIG_DEFAULT_TCP_CONG="bbr2"
+make -j1 O=out ARCH=arm64 savedefconfig || true
+cp out/defconfig out/ksu_savedefconfig 2>/dev/null || true
 
-# Preserve 32-bit compatibility for vendor blobs
-CONFIG_COMPAT_VDSO=y
-CONFIG_THUMB2_COMPAT_VDSO=y
-CONFIG_KUSER_HELPERS=y
+rm -f out/base_defconfig
 
-# Disable debug/sanitizer for production
-CONFIG_UBSAN=n
-CONFIG_KASAN=n
-EOF
-
-make -j1 O=out CC=clang ARCH=arm64 vendor/meteoric_defconfig ksu_ci.config savedefconfig
-rm -f ksu_ci.config
+echo "Config merge complete (Debug build: $KSU_DEBUG_BUILD)."
