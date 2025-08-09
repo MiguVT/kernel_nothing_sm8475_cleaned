@@ -1,3 +1,39 @@
+# KernelSU-Next + SUSFS Integration Overview
+
+This repository layers KernelSU-Next (kernel-space root) together with SUSFS (stealth / root hiding) using a strict, reproducible CI-driven configuration model.
+
+### Build Profiles
+| Profile | Flag (`debug_build`) | Adds | Disables |
+|---------|----------------------|------|----------|
+| Performance (default) | 0 | Core KernelSU + SUSFS, minimal LSM (`yama,integrity,selinux,kernelsu`) | Heavy instrumentation (KASAN/UBSAN/KFENCE), KALLSYMS_ALL, verbose logging |
+| Debug | 1 | KALLSYMS_ALL, KASAN, UBSAN, KFENCE, SCHEDSTATS, logging, expanded LSM | (n/a) |
+
+### Fragment Layering
+1. `kernelsu_susfs.config` – Mandatory symbols (KernelSU, SUSFS feature flags, namespaces, overlayfs, tmpfs ACL/XATTR, MODULES, KPROBES, SECURITYFS, minimal LSM).
+2. `perf_disable_debug.config` – Disables heavy debug for perf builds.
+3. `debug_enable.config` – Re-enables instrumentation & logging for debug builds.
+
+### Mandatory Symbols (validated)
+`CONFIG_KSU` `CONFIG_KSU_SUSFS` `CONFIG_KSU_LSM_SECURITY_HOOKS` `CONFIG_KSU_WITH_KPROBES` `CONFIG_KSU_SUSFS_SPOOF_UNAME` `CONFIG_OVERLAY_FS` `CONFIG_OVERLAY_FS_REDIRECT_DIR` `CONFIG_TMPFS_XATTR` `CONFIG_TMPFS_POSIX_ACL` `CONFIG_KALLSYMS` `CONFIG_KPROBES` `CONFIG_SECURITYFS` `CONFIG_PID_NS` `CONFIG_FHANDLE` `CONFIG_MODULES` and `CONFIG_LSM` containing `kernelsu`.
+
+### Kprobe Hook Rationale
+`CONFIG_KSU_WITH_KPROBES=y` gives dynamic, minimally invasive hook injection on modern GKI (>=5.10). Disable only for legacy kernels with unstable kprobe support and substitute manual hooks.
+
+### CI Highlights
+* `merge_config.sh` (no `-m`) for deterministic alldefconfig resolution.
+* Hard fail on missing required symbols (no force hacks).
+* Outputs focused symbol list, fragment hashes, and diff artifacts.
+
+### Local Usage
+Limited compatibility – for `configure_kernel.sh` only:
+```
+export KSU_DEBUG_BUILD=1   # or 0
+./.github/scripts/configure_kernel.sh
+```
+
+### Extending Requirements
+Add new required options to `kernelsu_susfs.config` and list them in `REQ_Y` inside `configure_kernel.sh`.
+
 # How do I submit patches to Android Common Kernels
 
 1. BEST: Make all of your changes to upstream Linux. If appropriate, backport to the stable releases.

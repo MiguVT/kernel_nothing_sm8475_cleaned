@@ -38,8 +38,13 @@ else
 fi
 
 cp out/.config out/base_defconfig || true
-bash scripts/kconfig/merge_config.sh -m -O out out/base_defconfig "${FRAGS[@]}"
-make -j"$MAKEJ" O=out ARCH=arm64 olddefconfig
+# Run merge_config.sh without the '-m' flag to allow alldefconfig resolution to happen internally
+bash scripts/kconfig/merge_config.sh -O out out/base_defconfig "${FRAGS[@]}"
+# Snapshot after merge (already post-alldefconfig)
+cp out/.config out/merged_post_merge_config.config || true
+echo "---- Post-merge_config MODULES/KPROBES snapshot ----" >&2
+grep -nE '^CONFIG_MODULES|^# CONFIG_MODULES|^CONFIG_KPROBES|^# CONFIG_KPROBES' out/.config || { echo "(no lines matched)" >&2; }
+echo "---------------------------------------------------" >&2
 
 # Validation
 REQ_Y=(
@@ -64,26 +69,18 @@ for k in "${REQ_Y[@]}"; do
   grep -q "^${k}=y" out/.config || MISSING+=("$k")
 done
 if [ ${#MISSING[@]} -gt 0 ]; then
-  # Allow soft-miss for KSU_WITH_KPROBES if kprobes path not used
-  FILTERED=()
-  for m in "${MISSING[@]}"; do
-    if [ "$m" = "CONFIG_KSU_WITH_KPROBES" ]; then
-      echo "WARN: $m missing (continuing). If you need kprobe-based hooks enable MODULES & KPROBES." >&2
-      continue
-    fi
-    FILTERED+=("$m")
-  done
-  if printf '%s\n' "${FILTERED[@]}" | grep -Eq 'CONFIG_MODULES|CONFIG_KPROBES'; then
-    echo "---- Diagnostic (tail of merged .config around MODULES/KPROBES) ----" >&2
-    grep -nE 'CONFIG_MODULES|CONFIG_KPROBES' out/.config | tail -20 >&2 || true
-    echo "-------------------------------------------------------------------" >&2
-    echo "Fragments applied:" >&2
-    for f in "${FRAGS[@]}"; do echo "== $f ==" >&2; grep -E 'CONFIG_MODULES|CONFIG_KPROBES' "$f" >&2 || true; done
+  if printf '%s\n' "${MISSING[@]}" | grep -Eq 'CONFIG_MODULES|CONFIG_KPROBES'; then
+    echo "---- Diagnostic (MODULES/KPROBES mismatch) ----" >&2
+    echo "Pre-olddefconfig snippet:" >&2
+    grep -nE '^CONFIG_MODULES|^# CONFIG_MODULES|^CONFIG_KPROBES|^# CONFIG_KPROBES' out/.config || true
+    echo "Post-olddefconfig snippet:" >&2
+    cp out/.config out/merged_post_olddefconfig.config || true
+    grep -nE '^CONFIG_MODULES|^# CONFIG_MODULES|^CONFIG_KPROBES|^# CONFIG_KPROBES' out/merged_post_olddefconfig.config || true
+    echo "Fragments (for those symbols):" >&2
+    for f in "${FRAGS[@]}"; do echo "== $f ==" >&2; grep -E '^CONFIG_MODULES|^# CONFIG_MODULES|^CONFIG_KPROBES|^# CONFIG_KPROBES' "$f" >&2 || true; done
   fi
-  if [ ${#FILTERED[@]} -gt 0 ]; then
-    echo "ERROR: Missing required options: ${FILTERED[*]}" >&2
-    exit 2
-  fi
+  echo "ERROR: Missing required options: ${MISSING[*]}" >&2
+  exit 2
 fi
 if ! grep -E '^CONFIG_LSM=".*kernelsu.*"' out/.config >/dev/null; then
   echo "ERROR: CONFIG_LSM missing kernelsu" >&2
