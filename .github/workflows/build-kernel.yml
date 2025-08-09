@@ -67,21 +67,45 @@ jobs:
 
         echo "SUSFS patches applied successfully"
 
+    - name: Setup Android NDK
+      run: |
+        echo "Setting up Android NDK for SUSFS userspace tools..."
+
+        # Download and install Android NDK
+        NDK_VERSION="25.2.9519653"
+        wget -q https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+        unzip -q android-ndk-r25c-linux.zip
+
+        # Set up NDK paths
+        export ANDROID_NDK_HOME="$GITHUB_WORKSPACE/android-ndk-r25c"
+        export PATH="$ANDROID_NDK_HOME:$PATH"
+
+        # Verify ndk-build is available
+        ls -la $ANDROID_NDK_HOME/ndk-build
+
+        # Add NDK to environment for subsequent steps
+        echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> $GITHUB_ENV
+        echo "$ANDROID_NDK_HOME" >> $GITHUB_PATH
+
     - name: Build SUSFS userspace tools
       run: |
         echo "Building ksu_susfs userspace tool..."
         cd susfs4ksu
-        
+
+        # Verify NDK is available
+        echo "NDK location: $ANDROID_NDK_HOME"
+        which ndk-build || echo "ndk-build not found in PATH"
+
         # Build the userspace tool
         chmod +x build_ksu_susfs_tool.sh
         ./build_ksu_susfs_tool.sh
-        
+
         # Verify that the tool was built successfully
         if [ ! -f "ksu_module_susfs/tools/ksu_susfs_arm64" ]; then
           echo "❌ Failed to build ksu_susfs tool!"
           exit 1
         fi
-        
+
         echo "✅ ksu_susfs tool built successfully"
         ls -la ksu_module_susfs/tools/
         cd ..
