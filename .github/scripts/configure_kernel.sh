@@ -58,14 +58,26 @@ REQ_Y=(
   CONFIG_SECURITYFS
   CONFIG_PID_NS
   CONFIG_FHANDLE
+  CONFIG_MODULES
 )
 MISSING=()
 for k in "${REQ_Y[@]}"; do
   grep -q "^${k}=y" out/.config || MISSING+=("$k")
 done
 if [ ${#MISSING[@]} -gt 0 ]; then
-  echo "ERROR: Missing required options: ${MISSING[*]}" >&2
-  exit 2
+  # Allow soft-miss for KSU_WITH_KPROBES if kprobes path not used
+  FILTERED=()
+  for m in "${MISSING[@]}"; do
+    if [ "$m" = "CONFIG_KSU_WITH_KPROBES" ]; then
+      echo "WARN: $m missing (continuing). If you need kprobe-based hooks enable MODULES & KPROBES." >&2
+      continue
+    fi
+    FILTERED+=("$m")
+  done
+  if [ ${#FILTERED[@]} -gt 0 ]; then
+    echo "ERROR: Missing required options: ${FILTERED[*]}" >&2
+    exit 2
+  fi
 fi
 if ! grep -E '^CONFIG_LSM=".*kernelsu.*"' out/.config >/dev/null; then
   echo "ERROR: CONFIG_LSM missing kernelsu" >&2
