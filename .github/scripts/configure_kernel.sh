@@ -10,6 +10,7 @@
 #  - Enforcement pass (auto re-merge) for critical symbols (y / string)
 #  - Accurate diagnostics (root symbols vs similarly prefixed)
 #  - Strict separation of performance vs debug builds (KSU_DEBUG_BUILD=1)
+#  - Manual VFS hook configuration (no kprobes dependency)
 #  - Focused reporting (symbols, fragment hashes, diff)
 #
 # Environment (override as needed):
@@ -85,7 +86,6 @@ REQUIRED_SETTINGS=(
   CONFIG_KSU=y
   CONFIG_KSU_SUSFS=y
   CONFIG_KSU_LSM_SECURITY_HOOKS=y
-  CONFIG_KSU_WITH_KPROBES=y
   CONFIG_KSU_SUSFS_SPOOF_UNAME=y
   CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
   CONFIG_OVERLAY_FS=y
@@ -94,12 +94,9 @@ REQUIRED_SETTINGS=(
   CONFIG_TMPFS_XATTR=y
   CONFIG_TMPFS_POSIX_ACL=y
   CONFIG_KALLSYMS=y
-  CONFIG_KPROBES=y
   CONFIG_SECURITYFS=y
   CONFIG_PID_NS=y
   CONFIG_FHANDLE=y
-  CONFIG_MODULES=y
-  CONFIG_MODULE_UNLOAD=y
   CONFIG_IKCONFIG=y
 )
 
@@ -115,13 +112,12 @@ if [ "$KSU_DEBUG_BUILD" = "1" ]; then
     CONFIG_DEBUG_INFO=y
     CONFIG_DEBUG_INFO_DWARF4=y
     CONFIG_UBSAN=y
-    CONFIG_KASAN=y
-    CONFIG_KASAN_HW_TAGS=y
     CONFIG_KFENCE=y
     CONFIG_SCHEDSTATS=y
     CONFIG_KALLSYMS_ALL=y
     CONFIG_IKCONFIG_PROC=y
-    CONFIG_KPROBE_EVENTS=y
+    CONFIG_DEBUG_FS=y
+    CONFIG_TRACING=y
   )
   REQ_STRINGS=( 'CONFIG_LSM="yama,landlock,lockdown,bpf,integrity,selinux,kernelsu"' )
 fi
@@ -197,8 +193,8 @@ if [ ${#FINAL_MISS[@]} -gt 0 ]; then
 fi
 
 if [ "$KSU_DEBUG_BUILD" != "1" ]; then
-  # Ensure heavy debug features are really off in perf build
-  FORBID=(CONFIG_KASAN CONFIG_KASAN_HW_TAGS CONFIG_UBSAN CONFIG_KFENCE CONFIG_SCHEDSTATS CONFIG_DEBUG_INFO CONFIG_KALLSYMS_ALL CONFIG_KSU_DEBUG CONFIG_KSU_SUSFS_ENABLE_LOG)
+  # Ensure heavy / debug-only features are really off in perf build
+  FORBID=(CONFIG_KASAN CONFIG_KASAN_HW_TAGS CONFIG_UBSAN CONFIG_KFENCE CONFIG_SCHEDSTATS CONFIG_DEBUG_INFO CONFIG_KALLSYMS_ALL CONFIG_KSU_DEBUG CONFIG_KSU_SUSFS_ENABLE_LOG CONFIG_DEBUG_FS CONFIG_TRACING CONFIG_IKCONFIG_PROC)
   BAD=()
   for b in "${FORBID[@]}"; do
     grep -qE "^${b}=y" "$OUT_DIR/.config" && BAD+=("$b") || true
@@ -209,12 +205,7 @@ if [ "$KSU_DEBUG_BUILD" != "1" ]; then
   fi
 fi
 
-# Targeted snapshots
-echo "---- Root symbol snapshot (MODULES/KPROBES) ----" >&2
-grep -nE '^(CONFIG_MODULES=|# CONFIG_MODULES is not set|CONFIG_KPROBES=|# CONFIG_KPROBES is not set)' "$OUT_DIR/.config" || true
-echo "------------------------------------------------" >&2
-
-REPORT_GREP='^(CONFIG_KSU|CONFIG_KSU_SUSFS|CONFIG_KSU_SUSFS_|CONFIG_OVERLAY_FS|CONFIG_TMPFS_|CONFIG_KALLSYMS(=|$)|CONFIG_KPROBES=|CONFIG_LSM=)'
+REPORT_GREP='^(CONFIG_KSU|CONFIG_KSU_SUSFS|CONFIG_KSU_SUSFS_|CONFIG_OVERLAY_FS|CONFIG_TMPFS_|CONFIG_KALLSYMS(=|$)|CONFIG_LSM=)'
 
 echo "==== KernelSU / SUSFS Summary ===="
 grep -E "$REPORT_GREP" "$OUT_DIR/.config" || true
@@ -225,7 +216,7 @@ sha256sum "$CORE_FRAG" "$DEBUG_FRAG" "$PERF_FRAG" 2>/dev/null | tee "$OUT_DIR/fr
 
 echo "==== Focused Diff (base vs final) ===="
 set +e
-diff -u "$OUT_DIR/base_original_defconfig" "$OUT_DIR/.config" 2>/dev/null | grep -E 'KSU|SUSFS|OVERLAY_FS|KALLSYMS|KPROBE|UBSAN|KASAN|KFENCE|DEBUG_INFO|SCHEDSTATS|CONFIG_LSM' | tee "$OUT_DIR/ksu_focused_diff.txt" || true
+diff -u "$OUT_DIR/base_original_defconfig" "$OUT_DIR/.config" 2>/dev/null | grep -E 'KSU|SUSFS|OVERLAY_FS|KALLSYMS|UBSAN|KASAN|KFENCE|DEBUG_INFO|SCHEDSTATS|CONFIG_LSM' | tee "$OUT_DIR/ksu_focused_diff.txt" || true
 set -e
 
 echo "==> Generating savedefconfig artifact"
