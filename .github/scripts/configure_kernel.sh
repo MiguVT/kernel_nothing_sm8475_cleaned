@@ -40,7 +40,7 @@ export KBUILD_BUILD_USER=ci-builder
 export LLVM=1 LLVM_IAS=1
 
 FRAG_DIR=.github/config-fragments
-BASE_FRAG=$FRAG_DIR/kernelsu_susfsconfig
+BASE_FRAG=$FRAG_DIR/kernelsu_susfs.config
 DEBUG_FRAG=$FRAG_DIR/debug_enable.config
 PROD_FRAG=$FRAG_DIR/perf_disable_debug.config
 
