@@ -13,15 +13,9 @@ on:
         required: true
         default: false
         type: boolean
-      build_mode:
-        description: 'Kernel build mode (BASE=minimal, DEBUG=dev, PROD=optimized)'
-        required: true
-        default: 'BASE'
-        type: choice
-        options: ['BASE', 'DEBUG', 'PROD']
 
 concurrency:
-  group: meteoric-kernel-${{ github.ref }}-${{ github.event.inputs.build_mode }}
+  group: meteoric-kernel-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -33,7 +27,6 @@ jobs:
     env:
       OUT_DIR: out
       KERNEL_DEFCONFIG: vendor/meteoric_defconfig
-      MAKEJ: 16  # parallelism for defconfig + light config operations (compile uses nproc)
     steps:
       - name: Checkout kernel source
         uses: actions/checkout@v4
@@ -180,14 +173,22 @@ jobs:
           export CC="ccache clang"
           ccache -s || true
           echo "Starting kernel compilation..."
+          # Ensure output directory exists before tee attempts to write the log
+          mkdir -p out
+          echo "Using defconfig: $KERNEL_DEFCONFIG"
+          # 1) Generate .config from defconfig (always regenerate for reproducibility)
+          make O=out ARCH=arm64 "$KERNEL_DEFCONFIG"
+          test -f out/.config || { echo "Defconfig step failed: out/.config not generated" >&2; exit 1; }
+          echo "Defconfig generated. Beginning full build..."
+          # 2) Build the kernel proper, logging output
           make -j"$PROCS" O=out ARCH=arm64 \
-               LLVM=1 LLVM_IAS=1 \
-               CLANG_TRIPLE=aarch64-linux-gnu- \
-               CROSS_COMPILE=aarch64-linux-android- \
-               CROSS_COMPILE_COMPAT=arm-linux-androideabi- \
-               AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump \
-               STRIP=llvm-strip LD=ld.lld \
-               CC="ccache clang" 2>&1 | tee out/build.log
+            LLVM=1 LLVM_IAS=1 \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-android- \
+            CROSS_COMPILE_COMPAT=arm-linux-androideabi- \
+            AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip LD=ld.lld \
+            CC="ccache clang" 2>&1 | tee out/build.log
           test -f out/arch/arm64/boot/Image || { echo "Kernel compilation failed" >&2; exit 1; }
           echo "Kernel compiled successfully"
           ccache -s || true
@@ -256,13 +257,13 @@ jobs:
               cp -r out/modules/lib/modules anykernel/modules/
             fi
             cd anykernel
-            ZIPNAME="Meteoric-KernelSU-Next-SUSFS-${{ github.event.inputs.build_mode }}-${{ github.event.inputs.version }}-$(date +%y%m%d-%H%M).zip"
+            ZIPNAME="Meteoric-KernelSU-Next-SUSFS-${{ github.event.inputs.version }}-$(date +%y%m%d-%H%M).zip"
             zip -r9 "../kernel_output/$ZIPNAME" *
             cd ..
             echo "ZIPNAME=$ZIPNAME" >> $GITHUB_ENV
           else
             cd kernel_output
-            ZIPNAME="Meteoric-KernelSU-Next-SUSFS-${{ github.event.inputs.build_mode }}-${{ github.event.inputs.version }}-$(date +%y%m%d-%H%M).zip"
+            ZIPNAME="Meteoric-KernelSU-Next-SUSFS-${{ github.event.inputs.version }}-$(date +%y%m%d-%H%M).zip"
             (zip -r9 "$ZIPNAME" Image dtb dtbo.img susfs_tools modules 2>/dev/null || zip -r9 "$ZIPNAME" Image susfs_tools modules 2>/dev/null || zip -r9 "$ZIPNAME" Image susfs_tools)
             echo "ZIPNAME=$ZIPNAME" >> $GITHUB_ENV
           fi
@@ -333,8 +334,6 @@ jobs:
 
             **Features:**
             - KernelSU-Next + SUSFS integration
-            - Selectable build modes via workflow input (build_mode: BASE / DEBUG / PROD)
-            - Exports defconfig diffs & final .config for auditing
 
             **Installation:**
             1. Flash ZIP in custom recovery
