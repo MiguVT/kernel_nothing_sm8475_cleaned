@@ -280,7 +280,7 @@ jobs:
 
       - name: Upload artifacts (main)
         if: ${{ !github.event.inputs.make_draft }}
-        uses: actions/upload-artifact@26f96dfa697d77e81fd5907df203aa23a56210a8 # v4.3.3 pinned
+        uses: actions/upload-artifact@v4
         with:
           name: meteoric-kernelsu-next-susfs-${{ github.event.inputs.version }}
           path: |
