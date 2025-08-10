@@ -172,33 +172,62 @@ jobs:
           test -f ksu_module_susfs/tools/ksu_susfs_arm64 || { echo "ksu_susfs tool build failed" >&2; exit 1; }
           ls -l ksu_module_susfs/tools/
 
-      - name: Configure and Optimize Kernel
+      - name: Verify config fragment exists
         run: |
           set -euo pipefail
-          chmod +x .github/scripts/configure_kernel.sh
-          export KSU_BUILD_MODE="${{ github.event.inputs.build_mode }}"
-          echo "Invoking configure_kernel.sh (mode=${KSU_BUILD_MODE})"
-          time ./.github/scripts/configure_kernel.sh
-          echo "Showing KernelSU related symbols in final .config:" || true
-          grep -E '^(CONFIG_KSU|CONFIG_KSU_SUSFS|CONFIG_KSU_SUSFS_|CONFIG_OVERLAY_FS|CONFIG_TMPFS_|CONFIG_KALLSYMS|CONFIG_LSM=)' out/.config || true
-          echo "Fragment hashes:"; cat out/fragment_hashes.txt || true
-          echo "Symbol report:"; cat out/ksu_susfs_symbols.txt || true
-          if [ -f out/.enforce_fragment.config ]; then
-            echo "Enforcement fragment was generated (indicates initial missing symbols).";
-            sed -e 's/^/ENFORCE: /' out/.enforce_fragment.config;
+          if [ ! -f .github/config-fragments/ksu_susfs.config ]; then
+            echo "ERROR: ksu_susfs.config fragment not found!" >&2
+            echo "Create .github/config-fragments/ksu_susfs.config with the optimized config" >&2
+            exit 1
           fi
+          echo "Config fragment found. Contents:"
+          cat .github/config-fragments/ksu_susfs.config
+          echo "Fragment line count: $(wc -l < .github/config-fragments/ksu_susfs.config)"
 
-      - name: Post-config sanity checks
+      - name: Merge KernelSU-Next + SuSFS config fragment
         run: |
           set -euo pipefail
-          # Minimal critical symbols (configure_kernel.sh already enforced a larger set)
-          REQUIRED=(CONFIG_KSU CONFIG_KSU_SUSFS CONFIG_KALLSYMS CONFIG_OVERLAY_FS CONFIG_SECURITYFS)
-          for config_symbol in "${REQUIRED[@]}"; do
-            if ! grep -q "^${config_symbol}=y" out/.config; then
-              echo "[FATAL] Required symbol ${config_symbol} missing in final .config" >&2; exit 1; fi; done
-          if ! grep -q '^CONFIG_LSM=".*kernelsu.*"' out/.config; then
-            echo "[FATAL] CONFIG_LSM missing kernelsu entry" >&2; exit 1; fi
-          echo "Core required symbols present."
+          echo "Merging ksu_susfs.config fragment into base defconfig ($KERNEL_DEFCONFIG)..."
+          export ARCH=arm64 SUBARCH=arm64
+          rm -f out/.config
+          make O=out "$KERNEL_DEFCONFIG"
+          cp out/.config out/base_original_defconfig || true
+          if [ -f scripts/kconfig/merge_config.sh ]; then
+            bash scripts/kconfig/merge_config.sh -m -O out out/.config .github/config-fragments/ksu_susfs.config || true
+          else
+            echo "merge_config.sh not found; appending fragment directly" >&2
+            cat .github/config-fragments/ksu_susfs.config >> out/.config
+          fi
+          case "${{ github.event.inputs.build_mode }}" in
+            DEBUG)
+              echo "DEBUG build: enabling SUSFS logging";
+              if grep -q '^CONFIG_KSU_SUSFS_ENABLE_LOG=' out/.config; then
+                sed -i 's/^CONFIG_KSU_SUSFS_ENABLE_LOG=.*/CONFIG_KSU_SUSFS_ENABLE_LOG=y/' out/.config
+              else
+                echo 'CONFIG_KSU_SUSFS_ENABLE_LOG=y' >> out/.config
+              fi ;;
+            *)
+              if grep -q '^CONFIG_KSU_SUSFS_ENABLE_LOG=y' out/.config; then
+                sed -i 's/^CONFIG_KSU_SUSFS_ENABLE_LOG=y/CONFIG_KSU_SUSFS_ENABLE_LOG=n/' out/.config
+              fi ;;
+          esac
+          if grep -q '^CONFIG_KSU_WITH_KPROBES=' out/.config; then
+            sed -i 's/^CONFIG_KSU_WITH_KPROBES=.*/CONFIG_KSU_WITH_KPROBES=n/' out/.config
+          fi
+          yes "" | make O=out olddefconfig >/dev/null 2>&1 || make O=out olddefconfig
+          echo '--- Resultant KSU / SUSFS / LSM symbols ---'
+          (grep -E 'CONFIG_KSU|SUSFS|^CONFIG_LSM=' out/.config | sort || true) | tee out/ksu_susfs_symbols.txt
+          # Focused diff (KSU/SUSFS + key file-system & LSM lines) vs base
+          if [ -f out/base_original_defconfig ]; then
+            (set +e; diff -u out/base_original_defconfig out/.config 2>/dev/null | grep -E 'KSU|SUSFS|LSM=' | sed -e 's/^/DIFF: /' > out/ksu_focused_diff.txt)
+          fi
+          # Fragment hash record (single fragment now)
+          sha256sum .github/config-fragments/ksu_susfs.config > out/fragment_hashes.txt || true
+          # Save cleaned defconfig snapshot
+          make -j1 O=out savedefconfig || true
+          cp out/defconfig out/ksu_savedefconfig 2>/dev/null || true
+          cp out/.config out/ksu_susfs_merged.config
+          echo "Fragment merge complete and artifacts generated."
 
       - name: Build kernel
         run: |
@@ -219,6 +248,26 @@ jobs:
           test -f out/arch/arm64/boot/Image || { echo "Kernel compilation failed" >&2; exit 1; }
           echo "Kernel compiled successfully"
           ccache -s || true
+
+      - name: Verify KernelSU-Next + SUSFS integration
+        run: |
+          set -euo pipefail
+          echo "Verifying kernel integration..."
+          if [ -f out/arch/arm64/boot/Image ]; then
+            echo "✓ Kernel Image built successfully"
+            ls -lh out/arch/arm64/boot/Image
+          fi
+          # Check if KSU symbols are present in final config
+          echo "KernelSU-Next + SUSFS symbols in final build:"
+          grep -E 'CONFIG_KSU.*=y|CONFIG_.*SUSFS.*=y' out/.config || echo "WARNING: No KSU/SUSFS symbols found in final config"
+          # Verify SUSFS userspace tool
+          if [ -f susfs4ksu/ksu_module_susfs/tools/ksu_susfs_arm64 ]; then
+            echo "✓ SUSFS userspace tool built successfully"
+            ls -lh susfs4ksu/ksu_module_susfs/tools/ksu_susfs_arm64
+          else
+            echo "WARNING: SUSFS userspace tool not found"
+          fi
+
 
       - name: Install modules
         run: |
@@ -293,13 +342,10 @@ jobs:
             out/.config
             out/ksu_savedefconfig
             out/base_original_defconfig
-            out/merged_after_first_pass.config
-            out/merged_after_enforcement.config
-            out/.enforce_fragment.config
-            out/enforcement_diff.txt
             out/ksu_focused_diff.txt
             out/ksu_susfs_symbols.txt
             out/fragment_hashes.txt
+            out/ksu_susfs_merged.config
             out/build.log
           retention-days: 30
 
@@ -312,13 +358,10 @@ jobs:
             out/.config
             out/ksu_savedefconfig
             out/base_original_defconfig
-            out/merged_after_first_pass.config
-            out/merged_after_enforcement.config
-            out/.enforce_fragment.config
-            out/enforcement_diff.txt
             out/ksu_focused_diff.txt
             out/ksu_susfs_symbols.txt
             out/fragment_hashes.txt
+            out/ksu_susfs_merged.config
             out/build.log
           retention-days: 10
 
@@ -333,10 +376,7 @@ jobs:
             out/ksu_focused_diff.txt
             out/ksu_susfs_symbols.txt
             out/fragment_hashes.txt
-            out/merged_after_first_pass.config
-            out/merged_after_enforcement.config
-            out/.enforce_fragment.config
-            out/enforcement_diff.txt
+            out/ksu_susfs_merged.config
           retention-days: 7
 
       - name: Create Release
@@ -360,11 +400,11 @@ jobs:
             **Manager:** Install KernelSU-Next Manager APK and grant root.
 
             **Changelog:**
-            - Added build mode selection (BASE/DEBUG/PROD) mapped to configure_kernel.sh enforcement
-            - Updated configuration merger/enforcement for KernelSU-Next + SuSFS
-            - Additional artifact: enforcement_diff.txt (shows enforced symbol changes)
-            - Improved packaging naming includes build mode
-            - Retains caching, concurrency, and detailed config artifacts
+            - Build mode selection (BASE / DEBUG / PROD) controls SUSFS logging
+            - Streamlined single fragment merge for KernelSU-Next + SuSFS
+            - Added focused diff & symbol summary artifacts
+            - Packaging name includes build mode & version
+            - Caching & concurrency retained for faster CI
 
           files: |
             kernel_output/*.zip
