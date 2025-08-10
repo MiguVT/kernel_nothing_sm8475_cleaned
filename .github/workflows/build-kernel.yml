@@ -13,15 +13,15 @@ on:
         required: true
         default: false
         type: boolean
-      debug_build:
-        description: 'Enable debug / sanitizers (KSU_DEBUG_BUILD=1)?'
-        required: false
-        default: '0'
+      build_mode:
+        description: 'Kernel build mode (BASE=minimal, DEBUG=dev, PROD=optimized)'
+        required: true
+        default: 'BASE'
         type: choice
-        options: ['0', '1']
+        options: ['BASE', 'DEBUG', 'PROD']
 
 concurrency:
-  group: meteoric-kernel-${{ github.ref }}-${{ github.event.inputs.debug_build }}
+  group: meteoric-kernel-${{ github.ref }}-${{ github.event.inputs.build_mode }}
   cancel-in-progress: true
 
 jobs:
@@ -173,12 +173,11 @@ jobs:
           ls -l ksu_module_susfs/tools/
 
       - name: Configure and Optimize Kernel
-        env:
-          KSU_DEBUG_BUILD: ${{ github.event.inputs.debug_build }}
         run: |
           set -euo pipefail
           chmod +x .github/scripts/configure_kernel.sh
-          echo "Invoking configure_kernel.sh (debug=${KSU_DEBUG_BUILD})"
+          export KSU_BUILD_MODE="${{ github.event.inputs.build_mode }}"
+          echo "Invoking configure_kernel.sh (mode=${KSU_BUILD_MODE})"
           time ./.github/scripts/configure_kernel.sh
           echo "Showing KernelSU related symbols in final .config:" || true
           grep -E '^(CONFIG_KSU|CONFIG_KSU_SUSFS|CONFIG_KSU_SUSFS_|CONFIG_OVERLAY_FS|CONFIG_TMPFS_|CONFIG_KALLSYMS|CONFIG_LSM=)' out/.config || true
@@ -192,13 +191,14 @@ jobs:
       - name: Post-config sanity checks
         run: |
           set -euo pipefail
-          REQUIRED=(CONFIG_KSU CONFIG_KSU_SUSFS CONFIG_KSU_LSM_SECURITY_HOOKS CONFIG_KSU_SUSFS_SPOOF_UNAME CONFIG_OVERLAY_FS CONFIG_OVERLAY_FS_REDIRECT_DIR CONFIG_OVERLAY_FS_INDEX CONFIG_TMPFS_XATTR CONFIG_TMPFS_POSIX_ACL CONFIG_KALLSYMS CONFIG_SECURITYFS CONFIG_PID_NS CONFIG_FHANDLE)
-            for config_symbol in "${REQUIRED[@]}"; do
-              if ! grep -q "^${config_symbol}=y" out/.config; then
-                echo "[FATAL] Required symbol ${config_symbol} missing in final .config" >&2; exit 1; fi; done
+          # Minimal critical symbols (configure_kernel.sh already enforced a larger set)
+          REQUIRED=(CONFIG_KSU CONFIG_KSU_SUSFS CONFIG_KALLSYMS CONFIG_OVERLAY_FS CONFIG_SECURITYFS)
+          for config_symbol in "${REQUIRED[@]}"; do
+            if ! grep -q "^${config_symbol}=y" out/.config; then
+              echo "[FATAL] Required symbol ${config_symbol} missing in final .config" >&2; exit 1; fi; done
           if ! grep -q '^CONFIG_LSM=".*kernelsu.*"' out/.config; then
             echo "[FATAL] CONFIG_LSM missing kernelsu entry" >&2; exit 1; fi
-          echo "All required symbols present."
+          echo "Core required symbols present."
 
       - name: Build kernel
         run: |
@@ -264,13 +264,13 @@ jobs:
               cp -r out/modules/lib/modules anykernel/modules/
             fi
             cd anykernel
-            ZIPNAME="Meteoric-KernelSU-Next-SUSFS-${{ github.event.inputs.version }}-$(date +%y%m%d-%H%M).zip"
+            ZIPNAME="Meteoric-KernelSU-Next-SUSFS-${{ github.event.inputs.build_mode }}-${{ github.event.inputs.version }}-$(date +%y%m%d-%H%M).zip"
             zip -r9 "../kernel_output/$ZIPNAME" *
             cd ..
             echo "ZIPNAME=$ZIPNAME" >> $GITHUB_ENV
           else
             cd kernel_output
-            ZIPNAME="Meteoric-KernelSU-Next-SUSFS-${{ github.event.inputs.version }}-$(date +%y%m%d-%H%M).zip"
+            ZIPNAME="Meteoric-KernelSU-Next-SUSFS-${{ github.event.inputs.build_mode }}-${{ github.event.inputs.version }}-$(date +%y%m%d-%H%M).zip"
             (zip -r9 "$ZIPNAME" Image dtb dtbo.img susfs_tools modules 2>/dev/null || zip -r9 "$ZIPNAME" Image susfs_tools modules 2>/dev/null || zip -r9 "$ZIPNAME" Image susfs_tools)
             echo "ZIPNAME=$ZIPNAME" >> $GITHUB_ENV
           fi
@@ -296,6 +296,7 @@ jobs:
             out/merged_after_first_pass.config
             out/merged_after_enforcement.config
             out/.enforce_fragment.config
+            out/enforcement_diff.txt
             out/ksu_focused_diff.txt
             out/ksu_susfs_symbols.txt
             out/fragment_hashes.txt
@@ -314,6 +315,7 @@ jobs:
             out/merged_after_first_pass.config
             out/merged_after_enforcement.config
             out/.enforce_fragment.config
+            out/enforcement_diff.txt
             out/ksu_focused_diff.txt
             out/ksu_susfs_symbols.txt
             out/fragment_hashes.txt
@@ -334,6 +336,7 @@ jobs:
             out/merged_after_first_pass.config
             out/merged_after_enforcement.config
             out/.enforce_fragment.config
+            out/enforcement_diff.txt
           retention-days: 7
 
       - name: Create Release
@@ -347,7 +350,7 @@ jobs:
 
             **Features:**
             - KernelSU-Next + SUSFS integration
-            - Toggle debug build via workflow input (debug_build)
+            - Selectable build modes via workflow input (build_mode: BASE / DEBUG / PROD)
             - Exports defconfig diffs & final .config for auditing
 
             **Installation:**
@@ -357,11 +360,11 @@ jobs:
             **Manager:** Install KernelSU-Next Manager APK and grant root.
 
             **Changelog:**
-            - Added debug build toggle
-            - Fragment-based config (kernelsu_susfs.config + perf_disable_debug.config) for clarity
-            - Config validation & artifacts (original + final + minimal)
-            - Improved SUSFS patch application & verification
-            - Added caching, pinned actions, concurrency & failure log upload
+            - Added build mode selection (BASE/DEBUG/PROD) mapped to configure_kernel.sh enforcement
+            - Updated configuration merger/enforcement for KernelSU-Next + SuSFS
+            - Additional artifact: enforcement_diff.txt (shows enforced symbol changes)
+            - Improved packaging naming includes build mode
+            - Retains caching, concurrency, and detailed config artifacts
 
           files: |
             kernel_output/*.zip
