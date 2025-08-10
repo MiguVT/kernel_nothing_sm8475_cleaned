@@ -181,7 +181,7 @@ jobs:
           echo "Invoking configure_kernel.sh (debug=${KSU_DEBUG_BUILD})"
           time ./.github/scripts/configure_kernel.sh
           echo "Showing KernelSU related symbols in final .config:" || true
-          grep -E '^(CONFIG_KSU|CONFIG_KSU_SUSFS|CONFIG_KSU_SUSFS_|CONFIG_OVERLAY_FS|CONFIG_TMPFS_|CONFIG_KALLSYMS|CONFIG_KPROBES|CONFIG_LSM=)' out/.config || true
+          grep -E '^(CONFIG_KSU|CONFIG_KSU_SUSFS|CONFIG_KSU_SUSFS_|CONFIG_OVERLAY_FS|CONFIG_TMPFS_|CONFIG_KALLSYMS|CONFIG_LSM=)' out/.config || true
           echo "Fragment hashes:"; cat out/fragment_hashes.txt || true
           echo "Symbol report:"; cat out/ksu_susfs_symbols.txt || true
           if [ -f out/.enforce_fragment.config ]; then
@@ -192,7 +192,7 @@ jobs:
       - name: Post-config sanity checks
         run: |
           set -euo pipefail
-          REQUIRED=(CONFIG_KSU CONFIG_KSU_SUSFS CONFIG_KPROBES CONFIG_MODULES CONFIG_OVERLAY_FS CONFIG_KALLSYMS CONFIG_SECURITYFS)
+          REQUIRED=(CONFIG_KSU CONFIG_KSU_SUSFS CONFIG_KSU_LSM_SECURITY_HOOKS CONFIG_KSU_SUSFS_SPOOF_UNAME CONFIG_OVERLAY_FS CONFIG_OVERLAY_FS_REDIRECT_DIR CONFIG_OVERLAY_FS_INDEX CONFIG_TMPFS_XATTR CONFIG_TMPFS_POSIX_ACL CONFIG_KALLSYMS CONFIG_SECURITYFS CONFIG_PID_NS CONFIG_FHANDLE)
             for config_symbol in "${REQUIRED[@]}"; do
               if ! grep -q "^${config_symbol}=y" out/.config; then
                 echo "[FATAL] Required symbol ${config_symbol} missing in final .config" >&2; exit 1; fi; done
