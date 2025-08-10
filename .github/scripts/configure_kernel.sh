@@ -98,10 +98,11 @@ REQUIRED_SETTINGS=(
   CONFIG_PID_NS=y
   CONFIG_FHANDLE=y
   CONFIG_IKCONFIG=y
+  CONFIG_KALLSYMS_ALL=y
 )
 
 REQ_STRINGS=(
-  'CONFIG_LSM="yama,integrity,selinux,kernelsu"'
+  'CONFIG_LSM="integrity,selinux,kernelsu"'
 )
 
 if [ "$KSU_DEBUG_BUILD" = "1" ]; then
@@ -114,7 +115,6 @@ if [ "$KSU_DEBUG_BUILD" = "1" ]; then
     CONFIG_UBSAN=y
     CONFIG_KFENCE=y
     CONFIG_SCHEDSTATS=y
-    CONFIG_KALLSYMS_ALL=y
     CONFIG_IKCONFIG_PROC=y
     CONFIG_DEBUG_FS=y
     CONFIG_TRACING=y
