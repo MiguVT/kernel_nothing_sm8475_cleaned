@@ -2,20 +2,19 @@
 # SPDX-License-Identifier: GPL-2.0-only
 #
 # configure_kernel.sh
-# Robust configuration merger & enforcement for KernelSU-Next + SUSFS on
+# Robust configuration merger & enforcement for KernelSU + SUSFS on
 # Nothing Phone (2) (SoC: SM8475) arm64 kernel builds under CI.
 #
 # Features:
 #  - Deterministic merge of base defconfig + required fragments
 #  - Enforcement pass (auto re-merge) for critical symbols (y / string)
 #  - Accurate diagnostics (root symbols vs similarly prefixed)
-#  - Strict separation: BASE vs DEBUG vs PROD builds
+#  - Strict separation of performance vs debug builds (KSU_DEBUG_BUILD=1)
 #  - Manual VFS hook configuration (no kprobes dependency)
 #  - Focused reporting (symbols, fragment hashes, diff)
-#  - Support for KernelSU-Next next-susfs branch + SuSFS gki-android12-5.10
 #
 # Environment (override as needed):
-#   KSU_BUILD_MODE=BASE|DEBUG|PROD : build configuration mode
+#   KSU_DEBUG_BUILD=0|1   : enable heavy debug/instrumentation set
 #   KERNEL_DEFCONFIG=vendor/meteoric_defconfig (device base)
 #   OUT_DIR=out            : output dir
 #   MAKEJ=<n>              : parallel jobs for make (default 8)
@@ -26,8 +25,7 @@
 #
 set -euo pipefail
 
-# Build mode: BASE (minimal), DEBUG (development), PROD (production optimized)
-: "${KSU_BUILD_MODE:=BASE}"
+: "${KSU_DEBUG_BUILD:=0}"
 : "${KERNEL_DEFCONFIG:=vendor/meteoric_defconfig}"
 : "${OUT_DIR:=out}"
 : "${MAKEJ:=8}"
@@ -40,20 +38,13 @@ export KBUILD_BUILD_USER=ci-builder
 export LLVM=1 LLVM_IAS=1
 
 FRAG_DIR=.github/config-fragments
-BASE_FRAG=$FRAG_DIR/kernelsu_susfs.config
+CORE_FRAG=$FRAG_DIR/kernelsu_susfs.config
 DEBUG_FRAG=$FRAG_DIR/debug_enable.config
-PROD_FRAG=$FRAG_DIR/perf_disable_debug.config
+PERF_FRAG=$FRAG_DIR/perf_disable_debug.config
 
-# Validate fragment files exist
-for f in "$BASE_FRAG" "$DEBUG_FRAG" "$PROD_FRAG"; do
+for f in "$CORE_FRAG" "$DEBUG_FRAG" "$PERF_FRAG"; do
   [ -f "$f" ] || { echo "[FATAL] Missing fragment: $f" >&2; exit 1; }
 done
-
-# Validate build mode
-case "$KSU_BUILD_MODE" in
-  BASE|DEBUG|PROD) ;;
-  *) echo "[FATAL] Invalid KSU_BUILD_MODE: $KSU_BUILD_MODE (must be BASE|DEBUG|PROD)" >&2; exit 1 ;;
-esac
 
 if [ ! -x scripts/kconfig/merge_config.sh ]; then
   echo "[FATAL] scripts/kconfig/merge_config.sh missing or not executable" >&2
@@ -67,20 +58,12 @@ echo "==> Applying base defconfig: $KERNEL_DEFCONFIG"
 make -j"$MAKEJ" O="$OUT_DIR" "$KERNEL_DEFCONFIG"
 cp "$OUT_DIR/.config" "$OUT_DIR/base_original_defconfig" || true
 
-# Fragment selection based on build mode
-FRAGS=("$BASE_FRAG")
-case "$KSU_BUILD_MODE" in
-  DEBUG)
-    FRAGS+=("$DEBUG_FRAG")
-    ;;
-  PROD)
-    FRAGS+=("$PROD_FRAG")
-    ;;
-  BASE)
-    # Only base fragment for minimal build
-    ;;
-esac
-
+FRAGS=("$CORE_FRAG")
+if [ "$KSU_DEBUG_BUILD" = "1" ]; then
+  FRAGS+=("$DEBUG_FRAG")
+else
+  FRAGS+=("$PERF_FRAG")
+fi
 if [ -n "$EXTRA_FRAGMENTS" ]; then
   # shellcheck disable=SC2206
   read -ra EXTRA_ARR <<< "$EXTRA_FRAGMENTS"
@@ -89,106 +72,81 @@ fi
 
 cp "$OUT_DIR/.config" "$OUT_DIR/base_defconfig" || true
 
-echo "==> First merge (base + fragments) - Mode: $KSU_BUILD_MODE"
+echo "==> First merge (base + fragments)"
 bash scripts/kconfig/merge_config.sh -O "$OUT_DIR" "$OUT_DIR/base_defconfig" "${FRAGS[@]}"
 cp "$OUT_DIR/.config" "$OUT_DIR/merged_after_first_pass.config" || true
 
 # ----------------------------------------------------------------------------
-# Enforcement logic: ensure required symbols are set based on configurations
-# discussed for KernelSU-Next + SuSFS
+# Enforcement logic: ensure required symbols are set; if not, generate a
+# supplemental fragment and re-merge exactly once (idempotent).
 # ----------------------------------------------------------------------------
 
-# BASE configuration requirements (always enforced)
+# Format: name=value (value 'y' or exact unquoted numeric/string)
+# Split required settings into base + debug-only + perf-only blocks so the
+# enforcement reflects the updated fragments.
 BASE_REQUIRED_SETTINGS=(
-  # KernelSU-Next Core
   CONFIG_KALLSYMS=y
   CONFIG_KALLSYMS_ALL=y
-  # Manual VFS Hooks (MANDATORY)
   CONFIG_KSU_WITH_KPROBES=n
-  # KernelSU Next Features
   CONFIG_KSU=y
   CONFIG_KSU_SUSFS=y
-  # SuSFS Core Requirements
   CONFIG_KSU_SUSFS_SUS_PATH=y
   CONFIG_KSU_SUSFS_SUS_MOUNT=y
   CONFIG_KSU_SUSFS_SUS_KSTAT=y
   CONFIG_KSU_SUSFS_SUS_MAPS=y
   CONFIG_KSU_SUSFS_SUS_PROC_STAT=y
-  # Filesystem Support
   CONFIG_PROC_FS=y
   CONFIG_SYSFS=y
   CONFIG_OVERLAY_FS=y
   CONFIG_NAMESPACES=y
   CONFIG_MNT_NS=y
-  # Security Base
   CONFIG_SECURITY=y
   CONFIG_SECURITYFS=y
 )
 
-# DEBUG specific requirements
+# Additional symbols present in the debug fragment (advanced debug / tracing)
 DEBUG_REQUIRED_SETTINGS=(
-  # KernelSU Debug
   CONFIG_KSU_DEBUG=y
-  # SuSFS Debug Features
   CONFIG_KSU_SUSFS_ENABLE_LOG=y
   CONFIG_KSU_SUSFS_SUS_SU=y
   CONFIG_DEBUG_FS=y
-  # Kernel Debug for hooks
   CONFIG_DYNAMIC_DEBUG=y
   CONFIG_PRINTK=y
   CONFIG_DEBUG_KERNEL=y
-  # VFS Debug (for troubleshoot hooks)
   CONFIG_DEBUG_VFS=y
-  # Tracing for hook analysis
+  CONFIG_DEBUG_MOUNT=y
+  CONFIG_DEBUG_PAGEALLOC=y
+  CONFIG_DEBUG_VM=y
   CONFIG_TRACING=y
   CONFIG_FTRACE=y
   CONFIG_FUNCTION_TRACER=y
-  # SuSFS Advanced Debug
+  # Advanced SuSFS debug features also in debug fragment
   CONFIG_KSU_SUSFS_SUS_PROC_CMDLINE=y
   CONFIG_KSU_SUSFS_SUS_PROC_VERSION=y
   CONFIG_KSU_SUSFS_SPOOF_UNAME=y
   CONFIG_KSU_SUSFS_SPOOF_KERNEL_VERSION=y
 )
 
-# PROD specific requirements
-PROD_REQUIRED_SETTINGS=(
-  # SuSFS Production Features
+# Production / perf-only features (from perf_disable_debug.config)
+PERF_REQUIRED_SETTINGS=(
   CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
   CONFIG_KSU_SUSFS_HAS_LKM=y
-  # Advanced Hiding Features
   CONFIG_KSU_SUSFS_SUS_PROC_CMDLINE=y
   CONFIG_KSU_SUSFS_SUS_PROC_VERSION=y
   CONFIG_KSU_SUSFS_SPOOF_UNAME=y
   CONFIG_KSU_SUSFS_SPOOF_KERNEL_VERSION=y
-  # Enhanced Security
   CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BY_UID=y
   CONFIG_KSU_SUSFS_TRY_UMOUNT=y
-  # Security Hardening for production
-  CONFIG_STRICT_KERNEL_RWX=y
-  CONFIG_RANDOMIZE_BASE=y
+  CONFIG_KSU_SUSFS_SUS_SU_WORKING_MODE=2
 )
 
-# Build complete requirements list based on mode
+# Build the unified REQUIRED_SETTINGS array according to build type.
 REQUIRED_SETTINGS=("${BASE_REQUIRED_SETTINGS[@]}")
-case "$KSU_BUILD_MODE" in
-  DEBUG)
-    REQUIRED_SETTINGS+=("${DEBUG_REQUIRED_SETTINGS[@]}")
-    ;;
-  PROD)
-    REQUIRED_SETTINGS+=("${PROD_REQUIRED_SETTINGS[@]}")
-    ;;
-esac
-
-# LSM string requirements (different for each mode)
-REQ_STRINGS=()
-case "$KSU_BUILD_MODE" in
-  DEBUG)
-    REQ_STRINGS=( 'CONFIG_LSM="yama,landlock,lockdown,bpf,integrity,selinux,kernelsu"' )
-    ;;
-  *)
-    REQ_STRINGS=( 'CONFIG_LSM="yama,integrity,selinux,kernelsu"' )
-    ;;
-esac
+if [ "$KSU_DEBUG_BUILD" = "1" ]; then
+  REQUIRED_SETTINGS+=("${DEBUG_REQUIRED_SETTINGS[@]}")
+else
+  REQUIRED_SETTINGS+=("${PERF_REQUIRED_SETTINGS[@]}")
+fi
 
 missing_symbol_report() {
   local sym wanted pattern actual
@@ -208,12 +166,6 @@ for entry in "${REQUIRED_SETTINGS[@]}"; do
   sym=${entry%%=*}; val=${entry#*=}
   if ! grep -qE "^${sym}=${val}$" "$OUT_DIR/.config"; then
     NEED_ENFORCE+=("$entry")
-  fi
-done
-for s in "${REQ_STRINGS[@]}"; do
-  name=${s%%=*}
-  if ! grep -qE "^${s}$" "$OUT_DIR/.config"; then
-    NEED_ENFORCE+=("$s")
   fi
 done
 
@@ -251,63 +203,63 @@ for entry in "${REQUIRED_SETTINGS[@]}"; do
   sym=${entry%%=*}; val=${entry#*=}
   grep -qE "^${sym}=${val}$" "$OUT_DIR/.config" || FINAL_MISS+=("$sym")
 done
-for s in "${REQ_STRINGS[@]}"; do
-  grep -qE "^${s}$" "$OUT_DIR/.config" || FINAL_MISS+=("${s%%=*}")
-done
 
 if [ ${#FINAL_MISS[@]} -gt 0 ]; then
   echo "[FATAL] Still missing required symbols after enforcement: ${FINAL_MISS[*]}" >&2
   exit 2
 fi
 
-# Mode-specific validation
-case "$KSU_BUILD_MODE" in
-  PROD)
-    # Ensure heavy debug features are disabled in PROD build
-    FORBID=(CONFIG_KSU_DEBUG CONFIG_KSU_SUSFS_ENABLE_LOG CONFIG_DEBUG_KERNEL CONFIG_DEBUG_FS CONFIG_DYNAMIC_DEBUG CONFIG_TRACING CONFIG_KASAN CONFIG_UBSAN CONFIG_KFENCE)
-    BAD=()
-    for b in "${FORBID[@]}"; do
-      grep -qE "^${b}=y" "$OUT_DIR/.config" && BAD+=("$b") || true
-    done
-    if [ ${#BAD[@]} -gt 0 ]; then
-      echo "[FATAL] Forbidden debug symbols enabled in PROD build: ${BAD[*]}" >&2
-      exit 3
-    fi
-    ;;
-  DEBUG)
-    # Ensure required debug features are enabled in DEBUG build
-    REQUIRED_DEBUG=(CONFIG_KSU_DEBUG CONFIG_KSU_SUSFS_ENABLE_LOG CONFIG_DEBUG_FS CONFIG_TRACING)
-    MISSING_DEBUG=()
-    for d in "${REQUIRED_DEBUG[@]}"; do
-      grep -qE "^${d}=y" "$OUT_DIR/.config" || MISSING_DEBUG+=("$d")
-    done
-    if [ ${#MISSING_DEBUG[@]} -gt 0 ]; then
-      echo "[FATAL] Missing required debug symbols in DEBUG build: ${MISSING_DEBUG[*]}" >&2
-      exit 4
-    fi
-    ;;
-esac
+if [ "$KSU_DEBUG_BUILD" != "1" ]; then
+  # Ensure heavy / debug-only features are really off in perf build
+  # (KALLSYMS_ALL retained for both builds per core fragment; removed from forbid list)
+  FORBID=(
+    CONFIG_KASAN
+    CONFIG_KASAN_HW_TAGS
+    CONFIG_UBSAN
+    CONFIG_KFENCE
+    CONFIG_SCHEDSTATS
+    CONFIG_DEBUG_INFO
+    CONFIG_KSU_DEBUG
+    CONFIG_KSU_SUSFS_ENABLE_LOG
+    CONFIG_DEBUG_FS
+    CONFIG_TRACING
+    CONFIG_FTRACE
+    CONFIG_FUNCTION_TRACER
+    CONFIG_DYNAMIC_DEBUG
+    CONFIG_DEBUG_VFS
+    CONFIG_DEBUG_MOUNT
+    CONFIG_DEBUG_PAGEALLOC
+    CONFIG_DEBUG_VM
+    CONFIG_IKCONFIG_PROC
+  )
+  BAD=()
+  for b in "${FORBID[@]}"; do
+    grep -qE "^${b}=y" "$OUT_DIR/.config" && BAD+=("$b") || true
+  done
+  if [ ${#BAD[@]} -gt 0 ]; then
+    echo "[FATAL] Forbidden debug symbols enabled in perf build: ${BAD[*]}" >&2
+    exit 3
+  fi
+fi
 
-# Enhanced reporting for KernelSU-Next + SuSFS
-REPORT_GREP='^(CONFIG_KSU|CONFIG_KSU_SUSFS|CONFIG_OVERLAY_FS|CONFIG_TMPFS_|CONFIG_KALLSYMS|CONFIG_LSM=|CONFIG_NAMESPACES|CONFIG_MNT_NS)'
+REPORT_GREP='^(CONFIG_KSU|CONFIG_KSU_SUSFS|CONFIG_KSU_SUSFS_|CONFIG_OVERLAY_FS|CONFIG_TMPFS_|CONFIG_KALLSYMS(=|$))'
 
-echo "==== KernelSU-Next + SuSFS Summary (Mode: $KSU_BUILD_MODE) ===="
+echo "==== KernelSU / SUSFS Summary ===="
 grep -E "$REPORT_GREP" "$OUT_DIR/.config" || true
 grep -E "$REPORT_GREP" "$OUT_DIR/.config" >"$OUT_DIR/ksu_susfs_symbols.txt" || true
 
 echo "==== Fragment Hashes ===="
-sha256sum "$BASE_FRAG" "$DEBUG_FRAG" "$PROD_FRAG" 2>/dev/null | tee "$OUT_DIR/fragment_hashes.txt" || true
+sha256sum "$CORE_FRAG" "$DEBUG_FRAG" "$PERF_FRAG" 2>/dev/null | tee "$OUT_DIR/fragment_hashes.txt" || true
 
 echo "==== Focused Diff (base vs final) ===="
 set +e
-diff -u "$OUT_DIR/base_original_defconfig" "$OUT_DIR/.config" 2>/dev/null | grep -E 'KSU|SUSFS|OVERLAY_FS|KALLSYMS|NAMESPACES|CONFIG_LSM|DEBUG' | tee "$OUT_DIR/ksu_focused_diff.txt" || true
+diff -u "$OUT_DIR/base_original_defconfig" "$OUT_DIR/.config" 2>/dev/null | grep -E 'KSU|SUSFS|OVERLAY_FS|KALLSYMS|UBSAN|KASAN|KFENCE|DEBUG_INFO|SCHEDSTATS' | tee "$OUT_DIR/ksu_focused_diff.txt" || true
 set -e
 
 echo "==> Generating savedefconfig artifact"
 make -j1 O="$OUT_DIR" savedefconfig || true
 cp "$OUT_DIR/defconfig" "$OUT_DIR/ksu_savedefconfig" 2>/dev/null || true
 
-echo "==> Final verification complete (Build mode: $KSU_BUILD_MODE)"
-echo "==> KernelSU-Next + SuSFS configuration ready for compilation"
+echo "==> Final verification complete (Debug build: $KSU_DEBUG_BUILD)"
 
 exit 0
