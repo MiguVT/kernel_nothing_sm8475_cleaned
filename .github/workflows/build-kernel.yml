@@ -16,6 +16,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    timeout-minutes: 120
 
     steps:
       - name: Checkout kernel source
@@ -31,15 +32,22 @@ jobs:
           sudo apt-get install -y clang lld llvm git gawk lz4 cpio xz-utils pahole
           sudo apt-get install -y gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
           sudo apt-get install -y python3-pip python3-dev
+          # Tools for packaging
+          sudo apt-get install -y zip unzip
 
       - name: Clone susfs4ksu
         run: |
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android12-5.10 susfs4ksu
 
+      - name: Clone AnyKernel3
+        run: |
+          # Widely used AnyKernel3 repo (creates 'anykernel' dir for consistency with packaging step)
+          git clone https://github.com/osm0sis/AnyKernel3.git anykernel
+
       - name: Setup Android NDK
         uses: nttld/setup-ndk@v1
         with:
-          ndk-version: r28c
+          ndk-version: r26d
           add-to-path: true
 
       - name: Apply SUSFS patches FIRST (CRITICAL STEP)
@@ -203,6 +211,115 @@ jobs:
           ls -la ksu_module_susfs/tools/ || echo "Tools directory structure may vary"
           cd ..
 
+      - name: Package kernel with AnyKernel3 (Professional Clean Approach)
+        run: |
+          set -euo pipefail
+          echo "=== AnyKernel3 Packaging (Clean Professional) ==="
+          if [ ! -d "anykernel" ]; then
+            echo "❌ AnyKernel3 directory not found!"
+            exit 1
+          fi
+          ANYKERNEL3_DIR="anykernel"
+          # Use the GitHub run number for versioning to match release tag (e.g., v42)
+          VERSION="v${{ github.run_number }}"
+          ZIPNAME="Meteoric-KernelSU-Next-SUSFS"
+          CLEANUP=true
+          echo "📋 Variables configured:"
+          echo "  • ANYKERNEL3_DIR: $ANYKERNEL3_DIR"
+          echo "  • VERSION: $VERSION"
+          echo "  • ZIPNAME: $ZIPNAME"
+          echo "🔧 Detecting kernel essentials..."
+          IMAGE=""
+          for img in "out/arch/arm64/boot/Image.gz-dtb" "out/arch/arm64/boot/Image-dtb" "out/arch/arm64/boot/Image.gz" "out/arch/arm64/boot/Image"; do
+            if [ -f "$img" ]; then
+              IMAGE="$img"
+              echo "✅ Found IMAGE: $(basename $IMAGE)"
+              break
+            fi
+          done
+          if [ -z "$IMAGE" ]; then
+            echo "❌ No kernel image found!"
+            exit 1
+          fi
+          DTBO=""; DTB=""
+          [ -f "out/arch/arm64/boot/dtbo.img" ] && DTBO="out/arch/arm64/boot/dtbo.img" && echo "✅ Found DTBO: $(basename $DTBO)"
+          [ -f "out/arch/arm64/boot/dtb" ] && DTB="out/arch/arm64/boot/dtb" && echo "✅ Found DTB: $(basename $DTB)"
+          echo "***********************************************"
+          echo "              Copying kernel essentials       "
+          echo "***********************************************"
+          cp $IMAGE $ANYKERNEL3_DIR/
+            [ -n "$DTBO" ] && cp $DTBO $ANYKERNEL3_DIR/ || echo "⚠️ No DTBO to copy"
+            [ -n "$DTB" ] && cp $DTB $ANYKERNEL3_DIR/ || echo "⚠️ No DTB to copy"
+          echo "🛡️ Adding SUSFS userspace tools..."
+          mkdir -p $ANYKERNEL3_DIR/susfs_tools
+          if cp susfs4ksu/ksu_module_susfs/tools/ksu_susfs_arm64 $ANYKERNEL3_DIR/susfs_tools/ksu_susfs 2>/dev/null; then
+            echo "✅ SUSFS ARM64 tool copied"
+          elif cp susfs4ksu/tools/ksu_susfs_arm64 $ANYKERNEL3_DIR/susfs_tools/ksu_susfs 2>/dev/null; then
+            echo "✅ SUSFS ARM64 tool copied (alternate path)"
+          else
+            echo "⚠️ SUSFS ARM64 tool not found"
+          fi
+          if cp susfs4ksu/ksu_module_susfs/tools/ksu_susfs_arm $ANYKERNEL3_DIR/susfs_tools/ksu_susfs_arm 2>/dev/null; then
+            echo "✅ SUSFS ARM32 backup copied"
+          elif cp susfs4ksu/tools/ksu_susfs_arm $ANYKERNEL3_DIR/susfs_tools/ksu_susfs_arm 2>/dev/null; then
+            echo "✅ SUSFS ARM32 backup copied (alternate path)"
+          fi
+          echo "***********************************************"
+          echo "                Time to zip up!                "
+          echo "***********************************************"
+          if [ $CLEANUP = true ]; then
+            echo "🧹 Cleaning up old zips..."
+            rm -rf out/*.zip 2>/dev/null || true
+          fi
+          mkdir -p out
+          cd $ANYKERNEL3_DIR/
+          FINAL_ZIP=$ZIPNAME-$VERSION-$(date +%y%m%d-%H%M).zip
+          echo "📦 Creating: $FINAL_ZIP"
+          zip -r9 "../out/$FINAL_ZIP" * -x README $FINAL_ZIP
+          cd ..
+          echo "🧹 Cleaning AnyKernel3 directory..."
+          rm -rf $ANYKERNEL3_DIR/Image $ANYKERNEL3_DIR/Image.* $ANYKERNEL3_DIR/dtbo.img $ANYKERNEL3_DIR/dtb
+          rm -rf $ANYKERNEL3_DIR/susfs_tools
+          if [ $(find out/ -name "$FINAL_ZIP" | wc -l) -ne 0 ]; then
+            echo "***********************************************"
+            echo "            Done, here is your sha1            "
+            echo "***********************************************"
+            SHA1=$(sha1sum out/$FINAL_ZIP | cut -d' ' -f1)
+            echo "SHA1: $SHA1"
+            FILESIZE=$(stat -f%z "out/$FINAL_ZIP" 2>/dev/null || stat -c%s "out/$FINAL_ZIP")
+            echo "Size: $FILESIZE bytes"
+            echo "File: $FINAL_ZIP"
+            if unzip -tq "out/$FINAL_ZIP"; then
+              echo "✅ Package integrity verified"
+            else
+              echo "❌ Package integrity check failed!"
+              exit 1
+            fi
+          else
+            echo "❌ Package creation failed!"
+            exit 1
+          fi
+          mkdir -p artifacts
+          cp "out/$FINAL_ZIP" artifacts/
+          echo "ZIPNAME=$FINAL_ZIP" >> $GITHUB_ENV
+          echo "PACKAGE_PATH=artifacts/$FINAL_ZIP" >> $GITHUB_ENV
+            echo "PACKAGE_SHA1=$SHA1" >> $GITHUB_ENV
+          {
+            echo "=== Kernel Package Information ==="
+            echo "Package: $FINAL_ZIP"
+            echo "SHA1: $SHA1"
+            echo "Size: $FILESIZE bytes"
+            echo "Version: $VERSION"
+            echo "Build Date: $(date +%y%m%d-%H%M)"
+            echo "Kernel: Meteoric by HELLBOY017"
+            echo "Root: KernelSU-Next + SUSFS"
+            echo "Device: Nothing Phone 2 (A/B)"
+            echo "Integrity: Verified ✅"
+          } > artifacts/package_info.txt
+          echo "✅ AnyKernel3 packaging completed successfully!"
+          echo "📦 Package ready: artifacts/$FINAL_ZIP"
+          echo "🔐 SHA1: $SHA1"
+
       - name: Prepare artifacts (ENHANCED)
         run: |
           set -euo pipefail
@@ -342,6 +459,7 @@ jobs:
             - **kernel_config** - Complete kernel configuration
             - **build_info.txt** - Detailed build information
             - **kernel_build.log** - Full compilation log
+            - **AnyKernel3 Flashable Zip**: ${{ env.ZIPNAME }} (SHA1: ${{ env.PACKAGE_SHA1 }})
 
             ### ⚡ Performance & Stability
             This build prioritizes both effectiveness and stability:
@@ -358,6 +476,7 @@ jobs:
             - **🔓 BOOTLOADER**: Requires unlocked bootloader
             - **📱 COMPATIBILITY**: Designed for Nothing Phone 2 (SM8475)
             - **📖 DOCUMENTATION**: This build follows ALL documented procedures correctly
-
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ZIPNAME: ${{ env.ZIPNAME }}
+          PACKAGE_SHA1: ${{ env.PACKAGE_SHA1 }}
