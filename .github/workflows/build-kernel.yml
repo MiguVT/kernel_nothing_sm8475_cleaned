@@ -211,10 +211,10 @@ jobs:
           ls -la ksu_module_susfs/tools/ || echo "Tools directory structure may vary"
           cd ..
 
-      - name: Package kernel with AnyKernel3 (Professional Clean Approach)
+      - name: Package kernel with AnyKernel3
         run: |
           set -euo pipefail
-          echo "=== AnyKernel3 Packaging (Clean Professional) ==="
+          echo "=== AnyKernel3 Packaging ==="
           if [ ! -d "anykernel" ]; then
             echo "❌ AnyKernel3 directory not found!"
             exit 1
@@ -233,7 +233,7 @@ jobs:
           for img in "out/arch/arm64/boot/Image.gz-dtb" "out/arch/arm64/boot/Image-dtb" "out/arch/arm64/boot/Image.gz" "out/arch/arm64/boot/Image"; do
             if [ -f "$img" ]; then
               IMAGE="$img"
-              echo "✅ Found IMAGE: $(basename $IMAGE)"
+              echo "✅ Found IMAGE: $(basename "$IMAGE")"
               break
             fi
           done
@@ -242,26 +242,26 @@ jobs:
             exit 1
           fi
           DTBO=""; DTB=""
-          [ -f "out/arch/arm64/boot/dtbo.img" ] && DTBO="out/arch/arm64/boot/dtbo.img" && echo "✅ Found DTBO: $(basename $DTBO)"
-          [ -f "out/arch/arm64/boot/dtb" ] && DTB="out/arch/arm64/boot/dtb" && echo "✅ Found DTB: $(basename $DTB)"
+          [ -f "out/arch/arm64/boot/dtbo.img" ] && DTBO="out/arch/arm64/boot/dtbo.img" && echo "✅ Found DTBO: $(basename "$DTBO")"
+          [ -f "out/arch/arm64/boot/dtb" ] && DTB="out/arch/arm64/boot/dtb" && echo "✅ Found DTB: $(basename "$DTB")"
           echo "***********************************************"
           echo "              Copying kernel essentials       "
           echo "***********************************************"
-          cp $IMAGE $ANYKERNEL3_DIR/
-            [ -n "$DTBO" ] && cp $DTBO $ANYKERNEL3_DIR/ || echo "⚠️ No DTBO to copy"
-            [ -n "$DTB" ] && cp $DTB $ANYKERNEL3_DIR/ || echo "⚠️ No DTB to copy"
+          cp -- "$IMAGE" "$ANYKERNEL3_DIR/"
+            [ -n "$DTBO" ] && [ -f "$DTBO" ] && cp -- "$DTBO" "$ANYKERNEL3_DIR/" || echo "⚠️ No DTBO to copy"
+            [ -n "$DTB" ] && [ -f "$DTB" ] && cp -- "$DTB" "$ANYKERNEL3_DIR/" || echo "⚠️ No DTB to copy"
           echo "🛡️ Adding SUSFS userspace tools..."
-          mkdir -p $ANYKERNEL3_DIR/susfs_tools
-          if cp susfs4ksu/ksu_module_susfs/tools/ksu_susfs_arm64 $ANYKERNEL3_DIR/susfs_tools/ksu_susfs 2>/dev/null; then
+          mkdir -p "$ANYKERNEL3_DIR/susfs_tools"
+          if cp susfs4ksu/ksu_module_susfs/tools/ksu_susfs_arm64 "$ANYKERNEL3_DIR/susfs_tools/ksu_susfs" 2>/dev/null; then
             echo "✅ SUSFS ARM64 tool copied"
-          elif cp susfs4ksu/tools/ksu_susfs_arm64 $ANYKERNEL3_DIR/susfs_tools/ksu_susfs 2>/dev/null; then
+          elif cp susfs4ksu/tools/ksu_susfs_arm64 "$ANYKERNEL3_DIR/susfs_tools/ksu_susfs" 2>/dev/null; then
             echo "✅ SUSFS ARM64 tool copied (alternate path)"
           else
             echo "⚠️ SUSFS ARM64 tool not found"
           fi
-          if cp susfs4ksu/ksu_module_susfs/tools/ksu_susfs_arm $ANYKERNEL3_DIR/susfs_tools/ksu_susfs_arm 2>/dev/null; then
+          if cp susfs4ksu/ksu_module_susfs/tools/ksu_susfs_arm "$ANYKERNEL3_DIR/susfs_tools/ksu_susfs_arm" 2>/dev/null; then
             echo "✅ SUSFS ARM32 backup copied"
-          elif cp susfs4ksu/tools/ksu_susfs_arm $ANYKERNEL3_DIR/susfs_tools/ksu_susfs_arm 2>/dev/null; then
+          elif cp susfs4ksu/tools/ksu_susfs_arm "$ANYKERNEL3_DIR/susfs_tools/ksu_susfs_arm" 2>/dev/null; then
             echo "✅ SUSFS ARM32 backup copied (alternate path)"
           fi
           echo "***********************************************"
@@ -272,19 +272,19 @@ jobs:
             rm -rf out/*.zip 2>/dev/null || true
           fi
           mkdir -p out
-          cd $ANYKERNEL3_DIR/
+          cd "$ANYKERNEL3_DIR/"
           FINAL_ZIP=$ZIPNAME-$VERSION-$(date +%y%m%d-%H%M).zip
           echo "📦 Creating: $FINAL_ZIP"
-          zip -r9 "../out/$FINAL_ZIP" * -x README $FINAL_ZIP
+          zip -r9 "../out/$FINAL_ZIP" * -x README "$FINAL_ZIP"
           cd ..
           echo "🧹 Cleaning AnyKernel3 directory..."
-          rm -rf $ANYKERNEL3_DIR/Image $ANYKERNEL3_DIR/Image.* $ANYKERNEL3_DIR/dtbo.img $ANYKERNEL3_DIR/dtb
-          rm -rf $ANYKERNEL3_DIR/susfs_tools
-          if [ $(find out/ -name "$FINAL_ZIP" | wc -l) -ne 0 ]; then
+          rm -rf "$ANYKERNEL3_DIR"/Image "$ANYKERNEL3_DIR"/Image.* "$ANYKERNEL3_DIR"/dtbo.img "$ANYKERNEL3_DIR"/dtb
+          rm -rf "$ANYKERNEL3_DIR"/susfs_tools
+          if [ "$(find out/ -name "$FINAL_ZIP" | wc -l)" -ne 0 ]; then
             echo "***********************************************"
             echo "            Done, here is your sha1            "
             echo "***********************************************"
-            SHA1=$(sha1sum out/$FINAL_ZIP | cut -d' ' -f1)
+            SHA1=$(sha1sum "out/$FINAL_ZIP" | cut -d' ' -f1)
             echo "SHA1: $SHA1"
             FILESIZE=$(stat -f%z "out/$FINAL_ZIP" 2>/dev/null || stat -c%s "out/$FINAL_ZIP")
             echo "Size: $FILESIZE bytes"
@@ -301,9 +301,9 @@ jobs:
           fi
           mkdir -p artifacts
           cp "out/$FINAL_ZIP" artifacts/
-          echo "ZIPNAME=$FINAL_ZIP" >> $GITHUB_ENV
-          echo "PACKAGE_PATH=artifacts/$FINAL_ZIP" >> $GITHUB_ENV
-            echo "PACKAGE_SHA1=$SHA1" >> $GITHUB_ENV
+          echo "ZIPNAME=$FINAL_ZIP" >> "$GITHUB_ENV"
+          echo "PACKAGE_PATH=artifacts/$FINAL_ZIP" >> "$GITHUB_ENV"
+          echo "PACKAGE_SHA1=$SHA1" >> "$GITHUB_ENV"
           {
             echo "=== Kernel Package Information ==="
             echo "Package: $FINAL_ZIP"
@@ -330,8 +330,8 @@ jobs:
           found_image=false
           for img in "out/arch/arm64/boot/Image.gz-dtb" "out/arch/arm64/boot/Image-dtb" "out/arch/arm64/boot/Image.gz" "out/arch/arm64/boot/Image"; do
             if [ -f "$img" ]; then
-              cp "$img" artifacts/
-              echo "Kernel Image: $(basename $img)" >> artifacts/build_info.txt
+              cp -- "$img" artifacts/
+              echo "Kernel Image: $(basename \"$img\")" >> artifacts/build_info.txt
               found_image=true
               break
             fi
@@ -343,8 +343,8 @@ jobs:
           fi
 
           # Copy DTB/DTBO if available
-          [ -f "out/arch/arm64/boot/dtb" ] && cp out/arch/arm64/boot/dtb artifacts/ || true
-          [ -f "out/arch/arm64/boot/dtbo.img" ] && cp out/arch/arm64/boot/dtbo.img artifacts/ || true
+          [ -f "out/arch/arm64/boot/dtb" ] && cp -- "out/arch/arm64/boot/dtb" artifacts/ || true
+          [ -f "out/arch/arm64/boot/dtbo.img" ] && cp -- "out/arch/arm64/boot/dtbo.img" artifacts/ || true
 
           # Copy userspace tools with flexible paths
           cp susfs4ksu/ksu_module_susfs/tools/ksu_susfs_arm64 artifacts/ 2>/dev/null || \
