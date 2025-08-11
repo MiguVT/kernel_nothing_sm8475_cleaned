@@ -39,11 +39,6 @@ jobs:
         run: |
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android12-5.10 susfs4ksu
 
-      - name: Clone AnyKernel3
-        run: |
-          # Widely used AnyKernel3 repo (creates 'anykernel' dir for consistency with packaging step)
-          git clone https://github.com/osm0sis/AnyKernel3.git anykernel
-
       - name: Setup Android NDK
         uses: nttld/setup-ndk@v1
         with:
