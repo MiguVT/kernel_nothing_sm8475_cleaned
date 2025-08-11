@@ -346,10 +346,6 @@ jobs:
           cp susfs4ksu/tools/ksu_susfs_arm64 artifacts/ 2>/dev/null || \
           echo "⚠️ ksu_susfs_arm64 not found"
 
-          cp susfs4ksu/ksu_module_susfs/tools/ksu_susfs_arm artifacts/ 2>/dev/null || \
-          cp susfs4ksu/tools/ksu_susfs_arm artifacts/ 2>/dev/null || \
-          echo "⚠️ ksu_susfs_arm not found"
-
           # Copy configuration and logs
           cp out/.config artifacts/kernel_config || true
           cp kernel_build.log artifacts/ || true
