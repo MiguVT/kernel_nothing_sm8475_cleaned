@@ -47,17 +47,17 @@ jobs:
         cp -r susfs4ksu/kernel_patches/include/linux/* include/linux/
 
         # Copy patch files for android12-5.10
-        cp susfs4ksu/kernel_patches/50_add_susfs_in_kernel-5.10.patch ./
+        cp susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch ./
 
         # Apply the kernel patch
-        echo "Applying 50_add_susfs_in_kernel-5.10.patch..."
-        patch -p1 < 50_add_susfs_in_kernel-5.10.patch || {
+        echo "Applying 50_add_susfs_in_gki-android12-5.10.patch..."
+        patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch || {
           echo "❌ SUSFS kernel patch failed! Manual intervention needed."
           exit 1
         }
 
         # Clean up patch file
-        rm -f 50_add_susfs_in_kernel-5.10.patch
+        rm -f 50_add_susfs_in_gki-android12-5.10.patch
 
     - name: Install KernelSU-Next with SUSFS (AFTER patches applied)
       run: |
