@@ -36,6 +36,12 @@ jobs:
       run: |
         git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android12-5.10 susfs4ksu
 
+    - name: Setup Android NDK
+      uses: nttld/setup-ndk@v1
+      with:
+        ndk-version: r28c
+        add-to-path: true
+
     - name: Apply SUSFS patches FIRST (CRITICAL STEP)
       run: |
         set -euo pipefail
