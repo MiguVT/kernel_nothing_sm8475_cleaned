@@ -2,9 +2,9 @@ name: Build KernelSU-Next with SUSFS Integration
 
 on:
   push:
-    branches: [main, clean]
+    branches: [base, clean]
   pull_request:
-    branches: [main]
+    branches: [base, clean]
   workflow_dispatch:
     inputs:
       create_release:
