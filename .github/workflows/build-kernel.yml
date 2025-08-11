@@ -121,7 +121,6 @@ jobs:
 
           # CRITICAL: Disable KPROBES for Manual VFS Hooks (RECOMMENDED)
           scripts/config --file out/.config --disable CONFIG_KSU_KPROBES_HOOK
-          scripts/config --file out/.config --set-str CONFIG_KSU_KPROBES_HOOK n
 
           # Enable LSM Security Hooks (recommended for Manual VFS)
           scripts/config --file out/.config --enable CONFIG_KSU_LSM_SECURITY_HOOKS
@@ -142,6 +141,11 @@ jobs:
           scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
           scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
           scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_OPEN_REDIRECT
+
+          make O=out ARCH=arm64 olddefconfig
+
+          echo "=== Verifying configuration ==="
+          grep CONFIG_KSU= out/.config
 
           # Save configuration info
           {
