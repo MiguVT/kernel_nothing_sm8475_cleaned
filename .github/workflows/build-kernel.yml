@@ -234,24 +234,45 @@ jobs:
           echo "✅ Core patches applied successfully!"
           echo "ℹ️  Note: SUSFS KernelSU integration is already included in WildKernels patches"
 
-      - name: Apply SUSFS fix patches to KernelSU-Next
+      - name: Apply SUSFS integration and fix patches to KernelSU-Next
         run: |
           set -euo pipefail
 
-          echo "=== Applying SUSFS fix patches (v1.5.9) ==="
+          echo "=== Applying SUSFS integration and fix patches ==="
 
-          # Apply all WildKernels SUSFS fix patches to KernelSU-Next in correct order
-          echo "Applying SUSFS fix patches..."
+          # CRITICAL: First apply the SUSFS enablement patch to KernelSU-Next
+          echo "1. Applying SUSFS enablement patch to KernelSU-Next..."
+          cd KernelSU-Next
+          cp ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
+          patch -p1 --forward < 10_enable_susfs_for_ksu.patch || true
 
-          patch -d KernelSU-Next -p0 --forward < kernel_patches/next/susfs_fix_patches/v1.5.9/fix_apk_sign.c.patch
-          patch -d KernelSU-Next -p0 --forward < kernel_patches/next/susfs_fix_patches/v1.5.9/fix_core_hook.c.patch
-          patch -d KernelSU-Next -p0 --forward < kernel_patches/next/susfs_fix_patches/v1.5.9/fix_kernel_compat.c.patch
-          patch -d KernelSU-Next -p0 --forward < kernel_patches/next/susfs_fix_patches/v1.5.9/fix_ksud.c.patch
-          patch -d KernelSU-Next -p0 --forward < kernel_patches/next/susfs_fix_patches/v1.5.9/fix_rules.c.patch
-          patch -d KernelSU-Next -p0 --forward < kernel_patches/next/susfs_fix_patches/v1.5.9/fix_selinux.c.patch
-          patch -d KernelSU-Next -p1 --forward < kernel_patches/next/susfs_fix_patches/v1.5.9/fix_sucompat.c.patch
+          # Now apply all WildKernels SUSFS fix patches in correct order
+          echo "2. Applying SUSFS fix patches (v1.5.9)..."
 
-          echo "✅ SUSFS fix patches applied successfully!"
+          cp ../kernel_patches/next/susfs_fix_patches/v1.5.9/fix_apk_sign.c.patch ./
+          patch -p1 --forward < fix_apk_sign.c.patch
+
+          cp ../kernel_patches/next/susfs_fix_patches/v1.5.9/fix_core_hook.c.patch ./
+          patch -p1 --forward --fuzz=3 < fix_core_hook.c.patch
+
+          cp ../kernel_patches/next/susfs_fix_patches/v1.5.9/fix_selinux.c.patch ./
+          patch -p1 --forward < fix_selinux.c.patch
+
+          cp ../kernel_patches/next/susfs_fix_patches/v1.5.9/fix_ksud.c.patch ./
+          patch -p1 --forward < fix_ksud.c.patch
+
+          cp ../kernel_patches/next/susfs_fix_patches/v1.5.9/fix_rules.c.patch ./
+          patch -p1 --forward < fix_rules.c.patch
+
+          cp ../kernel_patches/next/susfs_fix_patches/v1.5.9/fix_sucompat.c.patch ./
+          patch -p1 --forward < fix_sucompat.c.patch
+
+          cp ../kernel_patches/next/susfs_fix_patches/v1.5.9/fix_kernel_compat.c.patch ./
+          patch -p1 --forward < fix_kernel_compat.c.patch
+
+          cd ..
+
+          echo "✅ SUSFS integration and fix patches applied successfully!"
 
       - name: Apply additional kernel patches
         if: matrix.variant == 'experimental'
@@ -380,7 +401,7 @@ jobs:
           rm -f android/abi_gki_protected_exports_aarch64 || true
           rm -f android/abi_gki_protected_exports_x86_64 || true
 
-      #      - name: Apply compilation fixes (CRITICAL)
+      #      - name: Apply compilation fixes
       #        run: |
       #          echo "=== Applying known compilation fixes ==="
       #
