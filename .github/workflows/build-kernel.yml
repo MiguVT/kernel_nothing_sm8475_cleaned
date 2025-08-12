@@ -32,7 +32,7 @@ jobs:
       DEFAULT_SUSFS_COMMIT: 'b994a76465d39e38ac16a39e51aa07ef01ec6abc'
     strategy:
       matrix:
-        variant: [stable, experimental]
+        variant: [experimental]
         include:
           - variant: stable
             wildkernels_commit_override: 'f2227a36f02adf3776fc9d432734faf04787f3fa'
@@ -105,8 +105,8 @@ jobs:
           git clone https://gitlab.com/simonpunk/susfs4ksu.git
           cd susfs4ksu
           if [ "$SUSFS_COMMIT" = "latest" ]; then
-            echo "Using latest SUSFS commit"
-            git checkout main || git checkout master
+            echo "Using latest SUSFS commit from gki-android12-5.10 branch"
+            git checkout gki-android12-5.10
             ACTUAL_SUSFS_COMMIT=$(git rev-parse HEAD)
             echo "Actual SUSFS commit: $ACTUAL_SUSFS_COMMIT"
           else
