@@ -22,20 +22,6 @@ is_slot_device=1;
 # import patching functions/variables - see for reference
 . tools/ak3-core.sh;
 
-
-# Install SUSFS userspace tools
-ui_print " ";
-ui_print "🛡️ Installing SUSFS userspace tools...";
-if [ -f "$home/susfs_tools/ksu_susfs" ]; then
-  mkdir -p /data/adb/ksu/bin;
-  cp $home/susfs_tools/ksu_susfs /data/adb/ksu/bin/ksu_susfs;
-  chmod 755 /data/adb/ksu/bin/ksu_susfs;
-  ui_print "✅ SUSFS tool installed";
-else
-  ui_print "⚠️ SUSFS tools not found";
-fi;
-
-
 split_boot;
 flash_boot;
 
