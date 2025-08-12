@@ -117,11 +117,8 @@ jobs:
           echo "3. Applying SUSFS kernel patch..."
           patch --forward -p1 < susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch
 
-          # 4. Apply SUSFS KernelSU patch
-          echo "4. Applying SUSFS KernelSU integration..."
-          patch -d KernelSU-Next -p1 --forward < susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch
-
           echo "✅ Core patches applied successfully!"
+          echo "ℹ️  Note: SUSFS KernelSU integration is already included in WildKernels patches"
 
       - name: Save patch information for debugging
         if: always()
@@ -141,7 +138,6 @@ jobs:
             echo ""
             echo "✅ WildKernels next_hooks.patch applied (includes SUSFS KernelSU integration)"
             echo "✅ SUSFS kernel patches applied (fs/, include/linux/, kernel patch)"
-            echo "✅ SUSFS KernelSU patch applied"
             echo "✅ SUSFS fix patches applied (v1.5.9)"
             echo ""
             echo "=== Repository Status ==="
