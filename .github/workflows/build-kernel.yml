@@ -12,11 +12,32 @@ on:
         required: false
         default: false
         type: boolean
+      wildkernels_commit:
+        description: 'WildKernels commit hash'
+        required: false
+        default: '356183011a7447d362d949b5106f42c9f1f4af32'
+        type: string
+      susfs_commit:
+        description: 'SUSFS commit hash'
+        required: false
+        default: 'b994a76465d39e38ac16a39e51aa07ef01ec6abc'
+        type: string
 
 jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    env:
+      DEFAULT_WILDKERNELS_COMMIT: '356183011a7447d362d949b5106f42c9f1f4af32'
+      DEFAULT_SUSFS_COMMIT: 'b994a76465d39e38ac16a39e51aa07ef01ec6abc'
+    strategy:
+      matrix:
+        variant: [stable, experimental]
+        include:
+          - variant: stable
+            susfs_version: 'v1.5.9'
+          - variant: experimental
+            susfs_version: 'latest'
 
     steps:
       - name: Checkout kernel source
@@ -24,6 +45,19 @@ jobs:
         with:
           repository: MiguVT/kernel_nothing_sm8475_github_actions
           ref: clean
+
+      - name: Cache NDK and tools
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ndk
+            ~/.cache/clang
+            ~/.cache/llvm
+          key: ${{ runner.os }}-ndk-r26d-clang-${{ hashFiles('**/build.gradle') }}
+          restore-keys: |
+            ${{ runner.os }}-ndk-r26d-clang-
+            ${{ runner.os }}-ndk-r26d-
+            ${{ runner.os }}-ndk-
 
       - name: Setup build environment
         run: |
@@ -35,9 +69,26 @@ jobs:
           # Tools for packaging
           sudo apt-get install -y zip unzip
 
-      - name: Clone susfs4ksu
+      - name: Clone repositories
         run: |
-          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android12-5.10 susfs4ksu
+          # Use dynamic commit hashes from inputs with fallback to workflow-level defaults
+          WILDKERNELS_COMMIT="${{ github.event.inputs.wildkernels_commit || env.DEFAULT_WILDKERNELS_COMMIT }}"
+          SUSFS_COMMIT="${{ github.event.inputs.susfs_commit || env.DEFAULT_SUSFS_COMMIT }}"
+
+          echo "Using WildKernels commit: $WILDKERNELS_COMMIT"
+          echo "Using SUSFS commit: $SUSFS_COMMIT"
+
+          # Clone WildKernels patches
+          git clone https://github.com/WildKernels/kernel_patches.git
+          cd kernel_patches
+          git checkout "$WILDKERNELS_COMMIT"
+          cd ..
+
+          # Clone susfs4ksu
+          git clone https://gitlab.com/simonpunk/susfs4ksu.git
+          cd susfs4ksu
+          git checkout "$SUSFS_COMMIT"
+          cd ..
 
       - name: Setup Android NDK
         uses: nttld/setup-ndk@v1
@@ -45,100 +96,157 @@ jobs:
           ndk-version: r26d
           add-to-path: true
 
-      - name: Apply SUSFS patches FIRST (CRITICAL STEP)
+      - name: Install KernelSU-Next
         run: |
           set -euo pipefail
 
-          echo "=== Applying SUSFS kernel patches BEFORE KernelSU-Next ==="
+          echo "=== Installing KernelSU-Next ==="
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
 
-          # Copy SUSFS kernel files (REQUIRED even with next-susfs)
+      - name: Apply WildKernels patches
+        run: |
+          set -euo pipefail
+
+          echo "=== Applying WildKernels patches ==="
+          echo "Applying next_hooks.patch..."
+          if [ -f "kernel_patches/next/next_hooks.patch" ]; then
+            patch --forward -p1 < kernel_patches/next/next_hooks.patch || {
+              echo "❌ next_hooks patch failed! Manual intervention needed."
+              exit 1
+            }
+          else
+            echo "❌ next_hooks.patch file not found! Please check your repository or patch source."
+            exit 1
+          fi
+
+          echo "✅ WildKernels patches applied successfully!"
+
+      - name: Apply SUSFS kernel patches
+        run: |
+          set -euo pipefail
+
+          echo "=== Applying SUSFS kernel patches ==="
+
+          # Copy SUSFS kernel files (REQUIRED)
           cp -r susfs4ksu/kernel_patches/fs/* fs/
           cp -r susfs4ksu/kernel_patches/include/linux/* include/linux/
 
-          # Copy patch files for android12-5.10
-          cp susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch ./
-
-          # Apply the kernel patch
+          # Apply SUSFS kernel patch
           echo "Applying 50_add_susfs_in_gki-android12-5.10.patch..."
-          patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch || {
+          patch --forward -p1 < susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch || {
             echo "❌ SUSFS kernel patch failed! Manual intervention needed."
             exit 1
           }
 
-          # Clean up patch file
-          rm -f 50_add_susfs_in_gki-android12-5.10.patch
+          echo "✅ SUSFS kernel patches applied successfully!"
 
-      - name: Install KernelSU-Next with SUSFS (AFTER patches applied)
+      - name: Apply SUSFS KernelSU patches
         run: |
           set -euo pipefail
 
-          echo "=== Installing KernelSU-Next next-susfs branch ==="
-          # Now install KernelSU-Next on the SUSFS-patched kernel
-          curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/next-susfs/kernel/setup.sh" | bash -s next-susfs
-          # curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
+          echo "=== Applying SUSFS KernelSU patches ==="
 
-      - name: Apply compilation fixes (CRITICAL)
+          # Apply SUSFS patch to KernelSU-Next
+          echo "Applying 10_enable_susfs_for_ksu.patch to KernelSU-Next..."
+          patch -d KernelSU-Next -p1 --forward < susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || {
+            echo "❌ SUSFS KernelSU patch failed! Manual intervention needed."
+            exit 1
+          }
+
+          echo "✅ SUSFS KernelSU patches applied successfully!"
+
+      - name: Apply SUSFS fix patches
         run: |
-          echo "=== Applying known compilation fixes ==="
+          set -euo pipefail
 
-          #
-          # If there is no known issues or old issues will be fixed, it will be commented like documentation of old issues because maybe it appear again :) just to make sure
-          #
+          echo "=== Applying SUSFS fix patches (${{ matrix.susfs_version }}) ==="
 
-          # Fix for ksu_devpts_hook compilation error (Issue #426)
-          if [ -f "KernelSU-Next/kernel/sucompat.c" ]; then
-            # Check if fix is needed
-            if ! grep -q "bool ksu_devpts_hook" KernelSU-Next/kernel/sucompat.c; then
-              echo "Applying ksu_devpts_hook fix..."
-              # Add the missing declaration
-              sed -i '/^#ifdef CONFIG_KSU_SUSFS_SUS_SU/i bool ksu_devpts_hook = false;' KernelSU-Next/kernel/sucompat.c
+          # Apply WildKernels SUSFS fix patches to KernelSU-Next
+          SUSFS_VERSION="${{ matrix.susfs_version }}"
+
+          if [ "$SUSFS_VERSION" = "latest" ]; then
+            # For experimental builds, try to find the latest version
+            PATCH_DIR=$(find kernel_patches/next/susfs_fix_patches/ -type d -name "v*" | sed 's/.*\///' | sort -n -t. -k2,2 | tail -1)
+            if [ -z "$PATCH_DIR" ]; then
+              PATCH_DIR="kernel_patches/next/susfs_fix_patches/v1.5.9"
+              echo "⚠️ No latest version found, falling back to v1.5.9"
+            else
+              PATCH_DIR="kernel_patches/next/susfs_fix_patches/$PATCH_DIR"
             fi
+          else
+            PATCH_DIR="kernel_patches/next/susfs_fix_patches/$SUSFS_VERSION"
           fi
 
-          # Apply 10_enable_susfs_for_ksu.patch if it exists and wasn't auto-applied
-          if [ -f "susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" ]; then
-            echo "Applying 10_enable_susfs_for_ksu.patch to KernelSU-Next..."
-            cd KernelSU-Next
-            patch -p1 < ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || echo "Patch may have been auto-applied"
-            cd ..
+          echo "Using SUSFS fix patches from: $PATCH_DIR"
+
+          patch -d KernelSU-Next -p0 --forward < "$PATCH_DIR/fix_apk_sign.c.patch" || echo "⚠️ fix_apk_sign.c.patch may have failed"
+          patch -d KernelSU-Next -p0 --forward < "$PATCH_DIR/fix_core_hook.c.patch" || echo "⚠️ fix_core_hook.c.patch may have failed"
+          patch -d KernelSU-Next -p0 --forward < "$PATCH_DIR/fix_kernel_compat.c.patch" || echo "⚠️ fix_kernel_compat.c.patch may have failed"
+          patch -d KernelSU-Next -p0 --forward < "$PATCH_DIR/fix_ksud.c.patch" || echo "⚠️ fix_ksud.c.patch may have failed"
+          patch -d KernelSU-Next -p0 --forward < "$PATCH_DIR/fix_rules.c.patch" || echo "⚠️ fix_rules.c.patch may have failed"
+          patch -d KernelSU-Next -p0 --forward < "$PATCH_DIR/fix_selinux.c.patch" || echo "⚠️ fix_selinux.c.patch may have failed"
+
+          # Apply fix_sucompat.c.patch with special handling (different -p level)
+          set +e
+          patch -d KernelSU-Next -p1 --forward < "$PATCH_DIR/fix_sucompat.c.patch"
+          PATCH_STATUS=$?
+          set -e
+          if [ $PATCH_STATUS -ne 0 ]; then
+            echo "⚠️ fix_sucompat.c.patch failed to apply!"
           fi
 
-      - name: Configure kernel for Manual VFS Hooks (RECOMMENDED)
+          echo "✅ SUSFS fix patches applied successfully!"
+
+      #      - name: Apply compilation fixes (CRITICAL)
+      #        run: |
+      #          echo "=== Applying known compilation fixes ==="
+      #
+      #          #
+      #          # If there is no known issues or old issues will be fixed, it will be commented like documentation of old issues because maybe it appear again :) just to make sure
+      #          #
+      #
+      #          # Fix for ksu_devpts_hook compilation error (Issue #426)
+      #          if [ -f "KernelSU-Next/kernel/sucompat.c" ]; then
+      #            # Check if fix is needed
+      #            if ! grep -q "bool ksu_devpts_hook" KernelSU-Next/kernel/sucompat.c; then
+      #              echo "Applying ksu_devpts_hook fix..."
+      #              # Add the missing declaration
+      #              sed -i '/^#ifdef CONFIG_KSU_SUSFS_SUS_SU/i bool ksu_devpts_hook = false;' KernelSU-Next/kernel/sucompat.c
+      #            fi
+      #          fi
+
+      - name: Configure kernel for KernelSU-Next + SUSFS
         run: |
           set -euo pipefail
 
           export ARCH=arm64
           export SUBARCH=arm64
 
-          echo "=== Configuring kernel with Manual VFS Hooks ==="
+          echo "=== Configuring kernel with KernelSU-Next + SUSFS ==="
 
           # Use meteoric defconfig as specified
           make O=out ARCH=arm64 vendor/meteoric_defconfig
 
-          # Configure for Manual VFS Hooks (BEST PRACTICE for stability)
+          # Configure KernelSU-Next
           scripts/config --file out/.config --enable CONFIG_KSU
-          scripts/config --file out/.config --enable CONFIG_KSU_SUSFS
-
-          # CRITICAL: Disable KPROBES for Manual VFS Hooks (RECOMMENDED)
-          scripts/config --file out/.config --disable CONFIG_KSU_KPROBES_HOOK
-
-          # Enable LSM Security Hooks (recommended for Manual VFS)
+          scripts/config --file out/.config --disable CONFIG_KSU_DEBUG
+          scripts/config --file out/.config --disable CONFIG_KSU_ALLOWLIST_WORKAROUND
           scripts/config --file out/.config --enable CONFIG_KSU_LSM_SECURITY_HOOKS
 
-          # Disable SUS_SU (not needed for Manual VFS Hooks)
-          scripts/config --file out/.config --disable CONFIG_KSU_SUSFS_SUS_SU
-
-          # Enable all SUSFS features for maximum root hiding
+          # Configure KernelSU-Next SUSFS features
+          scripts/config --file out/.config --enable CONFIG_KSU_SUSFS
+          scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT
           scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_SUS_PATH
           scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_SUS_MOUNT
+          scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
+          scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT
           scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_SUS_KSTAT
+          scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_SUS_OVERLAYFS
+          scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_TRY_UMOUNT
+          scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
           scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_SPOOF_UNAME
           scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_ENABLE_LOG
           scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
-          scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
-          scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT
-          scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_TRY_UMOUNT
-          scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
           scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
           scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_OPEN_REDIRECT
 
@@ -149,13 +257,15 @@ jobs:
 
           # Save configuration info
           {
-            echo "=== KernelSU + SUSFS Configuration ==="
-            echo "SUSFS Patches: APPLIED FIRST (fs/, include/linux/, kernel patch)"
-            echo "KernelSU-Next: next-susfs branch (installed AFTER SUSFS patches)"
-            echo "Manual VFS Hooks: ENABLED (RECOMMENDED for stability)"
-            echo "KPROBES: DISABLED (for better stability and compatibility)"
-            echo "Compilation Fixes: Applied (ksu_devpts_hook, etc.)"
-            echo "SUSFS Features: ALL ENABLED for maximum root hiding"
+            echo "=== KernelSU-Next + SUSFS Configuration (${{ matrix.variant }}) ==="
+            echo "Build Variant: ${{ matrix.variant }}"
+            echo "SUSFS Version: ${{ matrix.susfs_version }}"
+            echo "KernelSU-Next: https://github.com/KernelSU-Next/KernelSU-Next"
+            echo "WildKernels patches: commit ${{ github.event.inputs.wildkernels_commit || '356183011a7447d362d949b5106f42c9f1f4af32' }}"
+            echo "SUSFS: commit ${{ github.event.inputs.susfs_commit || 'b994a76465d39e38ac16a39e51aa07ef01ec6abc' }}"
+            echo "LSM Security Hooks: ENABLED"
+            echo "Magic Mount Support: ENABLED"
+            echo "All SUSFS Features: ENABLED for maximum root hiding"
             echo "Priority: STABILITY + ROOT HIDING EFFECTIVENESS"
           } > build_config.txt
 
@@ -179,16 +289,19 @@ jobs:
           export LLVM_IAS=1
 
           echo "=== Starting kernel build with configuration ==="
+          echo "Build Variant: ${{ matrix.variant }} ✅"
+          echo "SUSFS Version: ${{ matrix.susfs_version }} ✅"
+          echo "WildKernels patches applied: ✅"
           echo "SUSFS patches applied: ✅"
           echo "KernelSU-Next installed: ✅"
-          echo "Compilation fixes applied: ✅"
-          echo "Manual VFS Hooks configured: ✅"
+          echo "SUSFS fix patches applied: ✅"
+          echo "LSM Security Hooks configured: ✅"
 
           make O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 -j$(nproc) 2>&1 | tee kernel_build.log
 
           # Check build success with better error reporting
           if [ "${PIPESTATUS[0]}" -eq 0 ]; then
-            echo "✅ Kernel build completed successfully with SUSFS integration!"
+            echo "✅ Kernel build completed successfully with KernelSU-Next + SUSFS!"
           else
             echo "❌ Kernel build failed!"
             echo "Common issues:"
@@ -197,18 +310,6 @@ jobs:
             echo "3. Some SUSFS features may conflict with this kernel version"
             exit 1
           fi
-
-      - name: Build ksu_susfs userspace tool
-        run: |
-          set -euo pipefail
-
-          cd susfs4ksu
-          chmod +x ./build_ksu_susfs_tool.sh
-          ./build_ksu_susfs_tool.sh
-
-          echo "=== SUSFS Userspace Tools Built ==="
-          ls -la ksu_module_susfs/tools/ || echo "Tools directory structure may vary"
-          cd ..
 
       - name: Package kernel with AnyKernel3
         run: |
@@ -221,7 +322,7 @@ jobs:
           ANYKERNEL3_DIR="anykernel"
           # Use the GitHub run number for versioning to match release tag (e.g., v42)
           VERSION="v${{ github.run_number }}"
-          ZIPNAME="Meteoric-KernelSU-Next-SUSFS"
+          ZIPNAME="Meteoric-KernelSU-Next-SUSFS-${{ matrix.variant }}"
           CLEANUP=true
           echo "📋 Variables configured:"
           echo "  • ANYKERNEL3_DIR: $ANYKERNEL3_DIR"
@@ -249,20 +350,6 @@ jobs:
           cp -- "$IMAGE" "$ANYKERNEL3_DIR/"
             [ -n "$DTBO" ] && [ -f "$DTBO" ] && cp -- "$DTBO" "$ANYKERNEL3_DIR/" || echo "⚠️ No DTBO to copy"
             [ -n "$DTB" ] && [ -f "$DTB" ] && cp -- "$DTB" "$ANYKERNEL3_DIR/" || echo "⚠️ No DTB to copy"
-          echo "🛡️ Adding SUSFS userspace tools..."
-          mkdir -p "$ANYKERNEL3_DIR/susfs_tools"
-          if cp susfs4ksu/ksu_module_susfs/tools/ksu_susfs_arm64 "$ANYKERNEL3_DIR/susfs_tools/ksu_susfs" 2>/dev/null; then
-            echo "✅ SUSFS ARM64 tool copied"
-          elif cp susfs4ksu/tools/ksu_susfs_arm64 "$ANYKERNEL3_DIR/susfs_tools/ksu_susfs" 2>/dev/null; then
-            echo "✅ SUSFS ARM64 tool copied (alternate path)"
-          else
-            echo "⚠️ SUSFS ARM64 tool not found"
-          fi
-          if cp susfs4ksu/ksu_module_susfs/tools/ksu_susfs_arm "$ANYKERNEL3_DIR/susfs_tools/ksu_susfs_arm" 2>/dev/null; then
-            echo "✅ SUSFS ARM32 backup copied"
-          elif cp susfs4ksu/tools/ksu_susfs_arm "$ANYKERNEL3_DIR/susfs_tools/ksu_susfs_arm" 2>/dev/null; then
-            echo "✅ SUSFS ARM32 backup copied (alternate path)"
-          fi
           echo "***********************************************"
           echo "                Time to zip up!                "
           echo "***********************************************"
@@ -278,7 +365,6 @@ jobs:
           cd ..
           echo "🧹 Cleaning AnyKernel3 directory..."
           rm -rf "$ANYKERNEL3_DIR"/Image "$ANYKERNEL3_DIR"/Image.* "$ANYKERNEL3_DIR"/dtbo.img "$ANYKERNEL3_DIR"/dtb
-          rm -rf "$ANYKERNEL3_DIR"/susfs_tools
           if [ "$(find out/ -name "$FINAL_ZIP" | wc -l)" -ne 0 ]; then
             echo "***********************************************"
             echo "            Done, here is your sha1            "
@@ -311,7 +397,7 @@ jobs:
             echo "Version: $VERSION"
             echo "Build Date: $(date +%y%m%d-%H%M)"
             echo "Kernel: Meteoric by HELLBOY017"
-            echo "Root: KernelSU-Next + SUSFS"
+            echo "Root: KernelSU-Next + SUSFS (Module)"
             echo "Device: Nothing Phone 2 (A/B)"
             echo "Integrity: Verified ✅"
           } > artifacts/package_info.txt
@@ -345,11 +431,6 @@ jobs:
           [ -f "out/arch/arm64/boot/dtb" ] && cp -- "out/arch/arm64/boot/dtb" artifacts/ || true
           [ -f "out/arch/arm64/boot/dtbo.img" ] && cp -- "out/arch/arm64/boot/dtbo.img" artifacts/ || true
 
-          # Copy userspace tools with flexible paths
-          cp susfs4ksu/ksu_module_susfs/tools/ksu_susfs_arm64 artifacts/ 2>/dev/null || \
-          cp susfs4ksu/tools/ksu_susfs_arm64 artifacts/ 2>/dev/null || \
-          echo "⚠️ ksu_susfs_arm64 not found"
-
           # Copy configuration and logs
           cp out/.config artifacts/kernel_config || true
           cp kernel_build.log artifacts/ || true
@@ -360,23 +441,26 @@ jobs:
             echo "=== KernelSU-Next + SUSFS Build Information ==="
             echo "Build Date: $(date)"
             echo "Kernel Source: MiguVT/kernel_nothing_sm8475_github_actions (clean branch)"
-            echo "KernelSU-Next: pershoot/KernelSU-Next (next-susfs branch)"
-            echo "SUSFS: simonpunk/susfs4ksu (gki-android12-5.10 branch)"
+            echo "KernelSU-Next: https://github.com/KernelSU-Next/KernelSU-Next"
+            echo "WildKernels patches: commit 356183011a7447d362d949b5106f42c9f1f4af32"
+            echo "SUSFS: commit b994a76465d39e38ac16a39e51aa07ef01ec6abc"
             echo "Config: vendor/meteoric_defconfig"
             echo "Compiler: Clang with LLVM"
             echo "Architecture: ARM64"
             echo "Ubuntu Version: 24.04"
             echo ""
             echo "=== Build Process ==="
-            echo "1. SUSFS patches applied FIRST (fs/, include/, kernel patch)"
-            echo "2. KernelSU-Next installed AFTER SUSFS patching"
-            echo "3. Compilation fixes applied (ksu_devpts_hook fix)"
-            echo "4. Manual VFS Hooks configured (RECOMMENDED)"
+            echo "1. WildKernels next_hooks.patch applied"
+            echo "2. SUSFS patches applied (fs/, include/, kernel patch)"
+            echo "3. KernelSU-Next installed"
+            echo "4. SUSFS fix patches applied to KernelSU-Next"
+            echo "5. LSM Security Hooks configured"
             echo ""
             echo "=== Root Hiding Configuration ==="
-            echo "Manual VFS Hooks: ENABLED (RECOMMENDED for stability)"
-            echo "KPROBES Hooks: DISABLED (better compatibility)"
+            echo "LSM Security Hooks: ENABLED"
+            echo "Magic Mount Support: ENABLED"
             echo "SUSFS Features: ALL enabled for maximum hiding"
+            echo "SUSFS Module: Use module instead of userspace tools"
             echo "Priority: STABILITY + ROOT DETECTION BYPASS"
             echo ""
             echo "=== Available Files ==="
@@ -386,7 +470,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: kernelsu-next-susfs-${{ github.sha }}
+          name: kernelsu-next-susfs-${{ matrix.variant }}-${{ github.sha }}
           path: artifacts/
           retention-days: 30
 
@@ -394,8 +478,8 @@ jobs:
         if: github.event.inputs.create_release == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ github.run_number }}
-          name: KernelSU-Next + SUSFS Build ${{ github.run_number }}
+          tag_name: v${{ github.run_number }}-${{ matrix.variant }}
+          name: KernelSU-Next + SUSFS Build ${{ github.run_number }} (${{ matrix.variant }})
           draft: true
           prerelease: false
           files: artifacts/*
@@ -404,8 +488,9 @@ jobs:
 
             ### 📋 Build Information
             - **Kernel Source**: MiguVT/kernel_nothing_sm8475_github_actions (clean branch)
-            - **KernelSU-Next**: pershoot/KernelSU-Next (next-susfs branch)
-            - **SUSFS**: simonpunk/susfs4ksu (gki-android12-5.10 branch)
+            - **KernelSU-Next**: https://github.com/KernelSU-Next/KernelSU-Next
+            - **WildKernels patches**: commit 356183011a7447d362d949b5106f42c9f1f4af32
+            - **SUSFS**: commit b994a76465d39e38ac16a39e51aa07ef01ec6abc
             - **Configuration**: vendor/meteoric_defconfig
             - **Compiler**: Clang with LLVM (Modern Toolchain)
             - **Architecture**: ARM64
@@ -414,20 +499,20 @@ jobs:
 
             ### ✅ Build Process
             This build follows this procedure:
-            1. **✅ SUSFS patches applied FIRST** (fs/, include/linux/, kernel patch)
-            2. **✅ KernelSU-Next installed AFTER** SUSFS patching is complete
-            3. **✅ Compilation fixes applied** (ksu_devpts_hook and other known issues)
-            4. **✅ Manual VFS Hooks configured** (RECOMMENDED by experts)
-            5. **✅ Professional build process** following documented procedures
+            1. **✅ WildKernels next_hooks.patch applied**
+            2. **✅ SUSFS patches applied** (fs/, include/linux/, kernel patch)
+            3. **✅ KernelSU-Next installed**
+            4. **✅ SUSFS fix patches applied** to KernelSU-Next
+            5. **✅ LSM Security Hooks configured**
 
             ### ✨ Key Features & Optimizations
             - **✅ Proper SUSFS Integration** (patches applied in correct order)
-            - **✅ Manual VFS Hooks** (RECOMMENDED by KernelSU-Next team)
-            - **✅ KPROBES DISABLED** for better stability and compatibility
+            - **✅ LSM Security Hooks** (ENABLED for better compatibility)
+            - **✅ Magic Mount Support** (ENABLED for KernelSU modules)
             - **✅ All SUSFS features enabled** for maximum root hiding
-            - **✅ Compilation error fixes** (ksu_devpts_hook and others)
-            - **✅ Built following expert recommendations** from community
-            - **✅ Root hiding priority** with effectiveness AND stability
+            - **✅ WildKernels patches** for improved stability
+            - **✅ Prepared for SUSFS module**
+            - **✅ Built following latest procedures** from community
 
             ### 🛡️ Maximum Root Hiding Capabilities
             - **Path Hiding**: Suspicious paths and app directories
@@ -443,14 +528,11 @@ jobs:
             1. **⚠️ BACKUP**: Make sure to backup your current boot image!
             2. **Flash**: Use fastboot or custom recovery to flash the kernel (I only tested and recommend OrangeFox, the only recovery with full support for Nothing Phone 2/SM8475)
             3. **Manager**: Install KernelSU-Next manager from GitHub releases
-            4. **SUSFS Tools**: Copy userspace tools to `/data/adb/ksu/bin/`
-            5. **Module**: Install latest SUSFS module through KernelSU manager
-            6. **Configure**: Use SUSFS tools for fine-tuning hiding settings
+            4. **Module**: Install [latest SUSFS module](https://github.com/sidex15/susfs4ksu-module/releases) through KernelSU manager (userspace tools not included)
+            5. **Configure**: Use SUSFS module for fine-tuning hiding settings
 
             ### 📁 Included Files
             - **Kernel Image** (Image/Image.gz/Image-dtb/Image.gz-dtb)
-            - **ksu_susfs_arm64** - SUSFS userspace tool (ARM64)
-            - **ksu_susfs_arm** - SUSFS userspace tool (ARM32)
             - **kernel_config** - Complete kernel configuration
             - **build_info.txt** - Detailed build information
             - **kernel_build.log** - Full compilation log
@@ -458,12 +540,13 @@ jobs:
 
             ### ⚡ Performance & Stability
             This build prioritizes both effectiveness and stability:
-            - ✅ Uses proven Manual VFS Hooks instead of potentially buggy KPROBES
-            - ✅ Applies SUSFS patches in the **CORRECT ORDER** (before KernelSU-Next)
-            - ✅ Includes all necessary compilation fixes
+            - ✅ Uses LSM Security Hooks for better compatibility
+            - ✅ Applies patches in the **CORRECT ORDER**
+            - ✅ Includes WildKernels stability improvements
             - ✅ Follows exact procedures from community experts
             - ✅ Built with modern Clang toolchain for optimization
             - ✅ Maximum root hiding with stability prioritized
+            - ✅ Use [SUSFS module](https://github.com/sidex15/susfs4ksu-module) (Needed to install)
 
             ### ⚠️ Important Notes
             - **⚠️ EXPERIMENTAL SOFTWARE**: Flash at your own risk!
