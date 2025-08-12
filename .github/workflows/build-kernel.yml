@@ -130,8 +130,8 @@ jobs:
           # Use dynamic commit hashes with variant-specific logic
           if [ "${{ github.event.inputs.variant || matrix.variant }}" = "experimental" ]; then
             # For experimental builds, use latest commits unless user specifies otherwise
-            WILDKERNELS_COMMIT="${{ github.event.inputs.wildkernels_commit || 'latest' }}"
-            SUSFS_COMMIT="${{ github.event.inputs.susfs_commit || 'latest' }}"
+            WILDKERNELS_COMMIT="latest"
+            SUSFS_COMMIT="latest"
           else
             # For stable builds, use proven stable commits unless user specifies otherwise
             WILDKERNELS_COMMIT="${{ github.event.inputs.wildkernels_commit || env.DEFAULT_WILDKERNELS_COMMIT }}"
