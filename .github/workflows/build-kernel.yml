@@ -43,12 +43,16 @@ jobs:
       CCACHE_COMPILERCHECK: '%compiler% -dumpmachine; %compiler% -dumpversion'
       CCACHE_NOHASHDIR: 'true'
       CCACHE_HARDLINK: 'true'
+      CCACHE_MAXSIZE: '2G'
       DEFAULT_WILDKERNELS_COMMIT: 'f2227a36f02adf3776fc9d432734faf04787f3fa'
       DEFAULT_SUSFS_COMMIT: 'b994a76465d39e38ac16a39e51aa07ef01ec6abc'
     strategy:
       matrix:
         variant: [experimental]
         include:
+          #- variant: stable
+          #  wildkernels_commit_override: 'f2227a36f02adf3776fc9d432734faf04787f3fa'
+          #  susfs_commit_override: 'b994a76465d39e38ac16a39e51aa07ef01ec6abc'
           - variant: experimental
             wildkernels_commit_override: 'latest'
             susfs_commit_override: 'latest'
@@ -74,10 +78,11 @@ jobs:
 
       - name: Install and setup ccache
         run: |
+          set -euo pipefail
           sudo apt update && sudo apt install -y ccache
           mkdir -p ~/.cache/bazel ~/.ccache
           ccache --version
-          ccache --max-size=2G
+          ccache --max-size=$CCACHE_MAXSIZE
           ccache --set-config=compression=true
           echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
 
@@ -87,18 +92,16 @@ jobs:
           path: |
             ~/.cache/ndk
             ~/.cache/clang
-            ~/.cache/llvm
-            ~/.cache/git
             ~/.ccache
-            ~/.cache/bazel
-          key: ${{ runner.os }}-build-tools-ndk-r26d-${{ hashFiles('Makefile', 'arch/arm64/configs/vendor/meteoric_defconfig') }}
+          key: ${{ runner.os }}-build-${{ hashFiles('**/Makefile', 'arch/arm64/configs/**/*.config') }}-${{ matrix.variant }}-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-build-tools-ndk-r26d-
-            ${{ runner.os }}-build-tools-
-            ${{ runner.os }}-ndk-r26d-
+            ${{ runner.os }}-build-${{ hashFiles('**/Makefile', 'arch/arm64/configs/**/*.config') }}-${{ matrix.variant }}-
+            ${{ runner.os }}-build-${{ hashFiles('**/Makefile', 'arch/arm64/configs/**/*.config') }}-
+            ${{ runner.os }}-build-
 
       - name: Setup build environment
         run: |
+          set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y build-essential bc bison flex libssl-dev libelf-dev
           sudo apt-get install -y clang lld llvm git gawk lz4 cpio xz-utils pahole
@@ -115,6 +118,7 @@ jobs:
 
       - name: Get KernelSU-Next version
         run: |
+          set -euo pipefail
           echo "=== Getting KernelSU-Next version ==="
           BASE_VERSION=10200
           # We'll get actual version after cloning KernelSU-Next
@@ -122,6 +126,7 @@ jobs:
 
       - name: Clone repositories and dependencies
         run: |
+          set -euo pipefail
           # Use dynamic commit hashes with variant-specific logic
           if [ "${{ github.event.inputs.variant || matrix.variant }}" = "experimental" ]; then
             # For experimental builds, use latest commits unless user specifies otherwise
@@ -162,6 +167,82 @@ jobs:
             git checkout "$SUSFS_COMMIT"
           fi
           cd ..
+
+          # Clone AnyKernel3 for packaging
+          git clone https://github.com/osm0sis/AnyKernel3.git anykernel
+          cd anykernel
+          # Configure for Nothing Phone 2
+          cat > anykernel.sh << 'EOF'
+          # AnyKernel3 Ramdisk Mod Script
+          # osm0sis @ xda-developers
+
+          ## AnyKernel setup
+          # begin properties
+          properties() { '
+          kernel.string=KernelSU-Next + SUSFS for Nothing Phone 2 by MiguVT
+          do.devicecheck=1
+          do.modules=0
+          do.systemless=1
+          do.cleanup=1
+          do.cleanuponabort=0
+          device.name1=Spacewar
+          device.name2=spacewar
+          supported.versions=12-15
+          supported.patchlevels=
+          '; } # end properties
+
+          # shell variables
+          block=/dev/block/bootdevice/by-name/boot;
+          is_slot_device=1;
+          ramdisk_compression=auto;
+          patch_vbmeta_flag=auto;
+
+          ## AnyKernel methods (DO NOT CHANGE)
+          # import patching functions/variables - see for reference
+          . tools/ak3-core.sh;
+
+          ## AnyKernel file attributes
+          # set permissions/ownership for included ramdisk files
+          set_perm_recursive 0 0 755 644 $ramdisk/*;
+          set_perm_recursive 0 0 750 750 $ramdisk/init* $ramdisk/sbin;
+
+          ## AnyKernel install
+          dump_boot;
+
+          # begin ramdisk changes
+
+          # end ramdisk changes
+
+          write_boot;
+          ## end install
+          EOF
+          cd ..
+
+      - name: Verify patches before applying
+        run: |
+          set -euo pipefail
+
+          echo "=== Verifying required patches exist ==="
+
+          # Verify WildKernels patches exist
+          if [ ! -f "kernel_patches/next/next_hooks.patch" ]; then
+            echo "❌ Required WildKernels next_hooks.patch not found!"
+            exit 1
+          fi
+
+          # Verify SUSFS patches
+          if [ ! -f "susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch" ]; then
+            echo "❌ Required SUSFS kernel patch not found!"
+            exit 1
+          fi
+
+          # Verify SUSFS fix patches
+          if [ ! -d "kernel_patches/next/susfs_fix_patches/v1.5.9" ]; then
+            echo "❌ Required SUSFS fix patches directory not found!"
+            exit 1
+          fi
+
+          echo "✅ All required patches verified successfully!"
 
       - name: Install KernelSU-Next
         run: |
@@ -223,10 +304,11 @@ jobs:
           echo "✅ SUSFS fix patches applied successfully!"
 
       - name: Apply additional kernel patches
+        if: matrix.variant == 'experimental'
         run: |
           set -euo pipefail
 
-          echo "=== Applying additional kernel patches ==="
+          echo "=== Applying additional experimental kernel patches ==="
 
           # Apply hide stuff patches for additional stealth
           echo "Applying hide stuff patches..."
@@ -234,7 +316,7 @@ jobs:
             patch -p1 --forward --fuzz=3 < kernel_patches/69_hide_stuff.patch || echo "Hide stuff patch already applied or not needed"
           fi
 
-          echo "✅ Additional patches applied!"
+          echo "✅ Additional experimental patches applied!"
 
       - name: Configure kernel for KernelSU-Next + SUSFS (Enhanced)
         run: |
@@ -343,99 +425,10 @@ jobs:
 
       - name: Remove GKI protected exports (compatibility)
         run: |
+          set -euo pipefail
           # Remove for better module compatibility
           rm -f android/abi_gki_protected_exports_aarch64 || true
           rm -f android/abi_gki_protected_exports_x86_64 || true
-              found_image=true
-              break
-            fi
-          done
-
-          if [ "$found_image" = false ]; then
-            echo "⚠️ No kernel image found! Listing available files..."
-            find out/arch/arm64/boot/ -name "Image*" -type f || true
-          fi
-
-          # Copy DTB/DTBO if available
-          [ -f "out/arch/arm64/boot/dtb" ] && cp -- "out/arch/arm64/boot/dtb" artifacts/ || true
-          [ -f "out/arch/arm64/boot/dtbo.img" ] && cp -- "out/arch/arm64/boot/dtbo.img" artifacts/ || true
-
-          # Copy configuration and logs
-          cp out/.config artifacts/kernel_config || true
-          cp kernel_build.log artifacts/ || true
-          cp build_config.txt artifacts/ || true
-
-          # Generate build info
-          {
-            echo "=== KernelSU-Next + SUSFS Build Information ==="
-            echo "Build Date: $(date)"
-            echo "Kernel Source: MiguVT/kernel_nothing_sm8475_github_actions (clean branch)"
-            echo "KernelSU-Next: https://github.com/KernelSU-Next/KernelSU-Next"
-            VARIANT="${{ github.event.inputs.variant || matrix.variant }}"
-            if [ "$VARIANT" = "experimental" ]; then
-              echo "WildKernels patches: latest commit (experimental)"
-              echo "SUSFS: latest commit (experimental)"
-              echo "Build Type: EXPERIMENTAL - Latest features and fixes"
-            else
-              echo "WildKernels patches: commit ${{ github.event.inputs.wildkernels_commit || env.DEFAULT_WILDKERNELS_COMMIT }}"
-              echo "SUSFS: commit ${{ github.event.inputs.susfs_commit || env.DEFAULT_SUSFS_COMMIT }}"
-              echo "Build Type: STABLE - Proven stable commits"
-            fi
-            echo "Config: vendor/meteoric_defconfig"
-            echo "Compiler: Clang with LLVM + ccache"
-            echo "Architecture: ARM64"
-            echo "Ubuntu Version: 24.04"
-            echo ""
-            echo "=== Build Process ==="
-            echo "1. WildKernels next_hooks.patch applied"
-            echo "2. SUSFS patches applied (fs/, include/, kernel patch)"
-            echo "3. KernelSU-Next installed"
-            echo "4. SUSFS fix patches applied to KernelSU-Next"
-            echo "5. LSM Security Hooks configured"
-            echo "6. Performance optimizations applied (BBR TCP, etc.)"
-            echo ""
-            echo "=== Root Hiding Configuration ==="
-            echo "LSM Security Hooks: ENABLED"
-            echo "Magic Mount Support: ENABLED"
-            echo "SUSFS Features: ALL enabled for maximum hiding"
-            echo "SUSFS Module: Use module instead of userspace tools"
-            echo "Priority: STABILITY + ROOT DETECTION BYPASS"
-            echo ""
-            echo "=== Performance Features ==="
-            echo "BBR TCP Congestion Control: ENABLED"
-            echo "TMPFS Extended Attributes: ENABLED"
-            echo "Network Filter Enhancements: ENABLED"
-            echo "Build Cache (ccache): ENABLED"
-            echo ""
-            echo "=== Available Files ==="
-            find out/arch/arm64/boot/ -name "Image*" -o -name "dt*" 2>/dev/null || echo "Build artifacts listing unavailable"
-          } >> artifacts/build_info.txt
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: kernelsu-next-susfs-${{ github.event.inputs.variant || matrix.variant }}-v${{ env.KSUVER }}-${{ github.sha }}
-          path: artifacts/
-          retention-days: 30
-
-      - name: Apply SUSFS fix patches
-        run: |
-          set -euo pipefail
-
-          echo "=== Applying SUSFS fix patches (v1.5.9) ==="
-
-          # Apply all WildKernels SUSFS fix patches to KernelSU-Next in correct order
-          echo "Applying SUSFS fix patches..."
-
-          patch -d KernelSU-Next -p0 --forward < kernel_patches/next/susfs_fix_patches/v1.5.9/fix_apk_sign.c.patch
-          patch -d KernelSU-Next -p0 --forward < kernel_patches/next/susfs_fix_patches/v1.5.9/fix_core_hook.c.patch
-          patch -d KernelSU-Next -p0 --forward < kernel_patches/next/susfs_fix_patches/v1.5.9/fix_kernel_compat.c.patch
-          patch -d KernelSU-Next -p0 --forward < kernel_patches/next/susfs_fix_patches/v1.5.9/fix_ksud.c.patch
-          patch -d KernelSU-Next -p0 --forward < kernel_patches/next/susfs_fix_patches/v1.5.9/fix_rules.c.patch
-          patch -d KernelSU-Next -p0 --forward < kernel_patches/next/susfs_fix_patches/v1.5.9/fix_selinux.c.patch
-          patch -d KernelSU-Next -p1 --forward < kernel_patches/next/susfs_fix_patches/v1.5.9/fix_sucompat.c.patch
-
-          echo "✅ SUSFS fix patches applied successfully!"
 
       #      - name: Apply compilation fixes (CRITICAL)
       #        run: |
@@ -454,110 +447,6 @@ jobs:
       #              sed -i '/^#ifdef CONFIG_KSU_SUSFS_SUS_SU/i bool ksu_devpts_hook = false;' KernelSU-Next/kernel/sucompat.c
       #            fi
       #          fi
-
-      - name: Configure kernel for KernelSU-Next + SUSFS (Enhanced)
-        run: |
-          set -euo pipefail
-
-          export ARCH=arm64
-          export SUBARCH=arm64
-
-          echo "=== Configuring kernel with KernelSU-Next + SUSFS ==="
-
-          # Use meteoric defconfig as specified
-          make O=out ARCH=arm64 vendor/meteoric_defconfig
-
-          # Add KernelSU-Next configuration settings
-          echo "CONFIG_KSU=y" >> out/.config
-          scripts/config --file out/.config --disable CONFIG_KSU_DEBUG
-          scripts/config --file out/.config --disable CONFIG_KSU_ALLOWLIST_WORKAROUND
-          scripts/config --file out/.config --enable CONFIG_KSU_LSM_SECURITY_HOOKS
-          scripts/config --file out/.config --disable CONFIG_KSU_KPROBES_HOOK
-
-          # Add SUSFS configuration settings
-          scripts/config --file out/.config --enable CONFIG_KSU_SUSFS
-          scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT
-          scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_SUS_PATH
-          scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_SUS_MOUNT
-          scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
-          scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT
-          scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_SUS_KSTAT
-          scripts/config --file out/.config --disable CONFIG_KSU_SUSFS_SUS_OVERLAYFS
-          scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_TRY_UMOUNT
-          scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
-          scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_SPOOF_UNAME
-          scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_ENABLE_LOG
-          scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
-          scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
-          scripts/config --file out/.config --enable CONFIG_KSU_SUSFS_OPEN_REDIRECT
-          scripts/config --file out/.config --disable CONFIG_KSU_SUSFS_SUS_SU
-
-          # Add additional performance and network configurations
-          scripts/config --file out/.config --enable CONFIG_TMPFS_XATTR
-          scripts/config --file out/.config --enable CONFIG_TMPFS_POSIX_ACL
-          scripts/config --file out/.config --enable CONFIG_IP_NF_TARGET_TTL
-          scripts/config --file out/.config --enable CONFIG_IP6_NF_TARGET_HL
-          scripts/config --file out/.config --enable CONFIG_IP6_NF_MATCH_HL
-
-          # Add BBR TCP congestion control for better network performance
-          scripts/config --file out/.config --enable CONFIG_TCP_CONG_ADVANCED
-          scripts/config --file out/.config --enable CONFIG_TCP_CONG_BBR
-          scripts/config --file out/.config --enable CONFIG_NET_SCH_FQ
-          scripts/config --file out/.config --disable CONFIG_TCP_CONG_BIC
-          scripts/config --file out/.config --disable CONFIG_TCP_CONG_WESTWOOD
-          scripts/config --file out/.config --disable CONFIG_TCP_CONG_HTCP
-
-          # Apply final configuration
-          make O=out ARCH=arm64 olddefconfig
-
-          echo "=== Verifying configuration ==="
-          grep CONFIG_KSU= out/.config || echo "KSU config not found"
-          grep CONFIG_KSU_SUSFS= out/.config || echo "SUSFS config not found"
-
-          # Save configuration info
-          {
-            echo "=== KernelSU-Next + SUSFS Configuration (${{ github.event.inputs.variant || matrix.variant }}) ==="
-            echo "Build Variant: ${{ github.event.inputs.variant || matrix.variant }}"
-            echo "KernelSU-Next: https://github.com/KernelSU-Next/KernelSU-Next"
-            if [ "${{ github.event.inputs.variant || matrix.variant }}" = "experimental" ]; then
-              echo "WildKernels patches: latest commit ($(cd kernel_patches && git rev-parse HEAD))"
-              echo "SUSFS: latest commit ($(cd susfs4ksu && git rev-parse HEAD))"
-              echo "Build Type: EXPERIMENTAL - Latest commits for cutting-edge features"
-            else
-              echo "WildKernels patches: commit ${{ github.event.inputs.wildkernels_commit || env.DEFAULT_WILDKERNELS_COMMIT }}"
-              echo "SUSFS: commit ${{ github.event.inputs.susfs_commit || env.DEFAULT_SUSFS_COMMIT }}"
-              echo "Build Type: STABLE - Proven stable commits"
-            fi
-            echo "LSM Security Hooks: ENABLED"
-            echo "Magic Mount Support: ENABLED"
-            echo "All SUSFS Features: ENABLED for maximum root hiding"
-            echo "Performance Optimizations: BBR TCP, TMPFS features enabled"
-            echo "Priority: STABILITY + ROOT HIDING EFFECTIVENESS"
-          } > build_config.txt
-
-      - name: Update kernel name and version
-        run: |
-          set -euo pipefail
-
-          echo "=== Updating kernel name and version ==="
-
-          # Remove -dirty and -maybe-dirty suffixes
-          perl -pi -e 's/-dirty//' ./scripts/setlocalversion
-          perl -pi -e 's/-maybe-dirty//g' ./scripts/setlocalversion
-
-          # Set custom kernel version with KernelSU-Next + SUSFS info
-          perl -0777 -pi -e 's/(.*)(echo "\$res")/$1echo "\$res-Next-v$ENV{KSUVER}-SUSFS-v1.5.9-${{ github.event.inputs.variant || matrix.variant }}"/s' ./scripts/setlocalversion
-
-          # Set consistent build timestamp
-          perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT $(date)"}' ./scripts/mkcompile_h
-
-          echo "✅ Kernel name updated with KernelSU-Next version $KSUVER"
-
-      - name: Remove GKI protected exports (compatibility)
-        run: |
-          # Remove for better module compatibility
-          rm -f android/abi_gki_protected_exports_aarch64 || true
-          rm -f android/abi_gki_protected_exports_x86_64 || true
 
       - name: Build kernel with Clang (Modern toolchain + ccache)
         run: |
@@ -582,10 +471,18 @@ jobs:
           echo "Performance optimizations: ✅"
           echo "ccache enabled: ✅"
 
+          # Use optimal job count (not always nproc)
+          JOBS=$(nproc)
+          if [ $JOBS -gt 16 ]; then
+            JOBS=16  # Cap at 16 for stability
+          fi
+          echo "Using $JOBS parallel jobs for compilation"
+
           # Show ccache stats before build
           ccache --show-stats
 
-          make O=out ARCH=arm64 CC="ccache clang" LLVM=1 LLVM_IAS=1 -j$(nproc) 2>&1 | tee kernel_build.log
+          # Add timeout protection for long builds
+          timeout 90m make O=out ARCH=arm64 CC="ccache clang" LLVM=1 LLVM_IAS=1 -j$JOBS 2>&1 | tee kernel_build.log
 
           # Check build success
           if [ "${PIPESTATUS[0]}" -eq 0 ]; then
@@ -605,6 +502,32 @@ jobs:
             echo "3. Check for updated SUSFS or KernelSU-Next versions"
             exit 1
           fi
+
+      - name: Validate kernel build
+        run: |
+          set -euo pipefail
+
+          echo "=== Validating kernel build ==="
+
+          # Check if KernelSU is properly integrated
+          if ! grep -q "CONFIG_KSU=y" out/.config; then
+            echo "❌ KernelSU not properly configured!"
+            exit 1
+          fi
+
+          # Check if SUSFS is properly integrated
+          if ! grep -q "CONFIG_KSU_SUSFS=y" out/.config; then
+            echo "❌ SUSFS not properly configured!"
+            exit 1
+          fi
+
+          # Verify kernel image was built
+          if [ ! -f "out/arch/arm64/boot/Image" ]; then
+            echo "❌ Kernel image not found!"
+            exit 1
+          fi
+
+          echo "✅ Build validation passed - KernelSU and SUSFS properly integrated!"
 
       - name: Package kernel with AnyKernel3 (Enhanced)
         run: |
@@ -810,12 +733,6 @@ jobs:
             echo "Network Filter Enhancements: ENABLED"
             echo "Build Cache (ccache): ENABLED"
             echo "Nothing Phone 2 Optimizations: ENABLED"
-            echo ""
-            echo "=== Available Files ==="
-            find out/arch/arm64/boot/ -name "Image*" -o -name "dt*" 2>/dev/null || echo "Build artifacts listing unavailable"
-          } >> artifacts/build_info.txt
-            echo "SUSFS Module: Use module instead of userspace tools"
-            echo "Priority: STABILITY + ROOT DETECTION BYPASS"
             echo ""
             echo "=== Available Files ==="
             find out/arch/arm64/boot/ -name "Image*" -o -name "dt*" 2>/dev/null || echo "Build artifacts listing unavailable"
