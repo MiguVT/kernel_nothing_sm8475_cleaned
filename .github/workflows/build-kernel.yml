@@ -34,9 +34,9 @@ jobs:
       matrix:
         variant: [experimental]
         include:
-          - variant: stable
-            wildkernels_commit_override: 'f2227a36f02adf3776fc9d432734faf04787f3fa'
-            susfs_commit_override: 'b994a76465d39e38ac16a39e51aa07ef01ec6abc'
+          #          - variant: stable
+          #            wildkernels_commit_override: 'f2227a36f02adf3776fc9d432734faf04787f3fa'
+          #            susfs_commit_override: 'b994a76465d39e38ac16a39e51aa07ef01ec6abc'
           - variant: experimental
             wildkernels_commit_override: 'latest'
             susfs_commit_override: 'latest'
