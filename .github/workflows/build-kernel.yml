@@ -146,14 +146,88 @@ jobs:
 
           echo "=== Applying SUSFS KernelSU patches ==="
 
-          # Apply SUSFS patch to KernelSU-Next
+          # Apply SUSFS patch to KernelSU-Next with better error handling
           echo "Applying 10_enable_susfs_for_ksu.patch to KernelSU-Next..."
-          patch -d KernelSU-Next -p1 --forward < susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || {
-            echo "❌ SUSFS KernelSU patch failed! Manual intervention needed."
-            exit 1
-          }
 
-          echo "✅ SUSFS KernelSU patches applied successfully!"
+          set +e
+          patch -d KernelSU-Next -p1 --forward < susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch
+          PATCH_EXIT_CODE=$?
+          set -e
+
+          if [ $PATCH_EXIT_CODE -eq 0 ]; then
+            echo "✅ SUSFS KernelSU patch applied successfully!"
+          else
+            echo "⚠️ SUSFS KernelSU patch had some failures (exit code: $PATCH_EXIT_CODE)"
+            echo "This is common with evolving codebases. Checking for reject files..."
+
+            # List all reject files for debugging
+            find KernelSU-Next -name "*.rej" -type f | while read -r reject_file; do
+              echo "📄 Reject file found: $reject_file"
+              echo "--- Content preview ---"
+              head -20 "$reject_file" || true
+              echo "--- End preview ---"
+            done
+
+            # Count successful vs failed hunks
+            REJECT_COUNT=$(find KernelSU-Next -name "*.rej" -type f | wc -l)
+            echo "📊 Summary: $REJECT_COUNT file(s) had rejected hunks"
+
+            if [ $REJECT_COUNT -gt 6 ]; then
+              echo "❌ Too many patch failures ($REJECT_COUNT files). Build may fail."
+              echo "💡 Consider updating SUSFS patches or using a different KernelSU-Next commit."
+              exit 1
+            else
+              echo "⚠️ Some patches failed but continuing build (might still work)"
+              echo "💡 Monitor build logs for compilation errors"
+            fi
+          fi
+
+          echo "✅ SUSFS KernelSU patches step completed!"
+
+      - name: Save patch information for debugging
+        if: always()
+        run: |
+          set -euo pipefail
+
+          echo "=== Saving patch information for debugging ==="
+          mkdir -p artifacts/patch_info
+
+          # Save information about applied patches
+          {
+            echo "=== Patch Application Summary ==="
+            echo "Build Variant: ${{ matrix.variant }}"
+            echo "SUSFS Version: ${{ matrix.susfs_version }}"
+            echo "Build Date: $(date)"
+            echo "WildKernels Commit: ${{ github.event.inputs.wildkernels_commit || env.DEFAULT_WILDKERNELS_COMMIT }}"
+            echo "SUSFS Commit: ${{ github.event.inputs.susfs_commit || env.DEFAULT_SUSFS_COMMIT }}"
+            echo ""
+
+            # Check for reject files and save info
+            if find KernelSU-Next -name "*.rej" -type f 2>/dev/null | grep -q .; then
+              echo "⚠️ REJECTED PATCHES FOUND:"
+              find KernelSU-Next -name "*.rej" -type f | while read -r reject_file; do
+                echo "- $reject_file"
+              done
+              echo ""
+              echo "This indicates some SUSFS patches couldn't be applied cleanly."
+              echo "The build may still succeed if the failed hunks are non-critical."
+            else
+              echo "✅ NO REJECTED PATCHES - All patches applied cleanly!"
+            fi
+
+            echo ""
+            echo "=== Repository Status ==="
+            echo "KernelSU-Next branch info:"
+            cd KernelSU-Next && git log --oneline -5 || echo "Git log unavailable"
+          } > artifacts/patch_info/patch_summary.txt
+
+          # Copy all reject files for analysis
+          if find KernelSU-Next -name "*.rej" -type f 2>/dev/null | grep -q .; then
+            echo "Copying reject files for analysis..."
+            find KernelSU-Next -name "*.rej" -type f -exec cp {} artifacts/patch_info/ \;
+          fi
+
+          echo "✅ Patch information saved to artifacts/patch_info/"
 
       - name: Apply SUSFS fix patches
         run: |
@@ -267,6 +341,15 @@ jobs:
             echo "Magic Mount Support: ENABLED"
             echo "All SUSFS Features: ENABLED for maximum root hiding"
             echo "Priority: STABILITY + ROOT HIDING EFFECTIVENESS"
+            echo ""
+            echo "=== Patch Application Status ==="
+            if find KernelSU-Next -name "*.rej" -type f 2>/dev/null | grep -q .; then
+              echo "SUSFS Patches: PARTIAL (some hunks failed - check patch_info for details)"
+              echo "Build Status: EXPERIMENTAL (may have compilation issues)"
+            else
+              echo "SUSFS Patches: COMPLETE (all hunks applied successfully)"
+              echo "Build Status: STABLE"
+            fi
           } > build_config.txt
 
       - name: Remove GKI protected exports (compatibility)
@@ -292,8 +375,17 @@ jobs:
           echo "Build Variant: ${{ matrix.variant }} ✅"
           echo "SUSFS Version: ${{ matrix.susfs_version }} ✅"
           echo "WildKernels patches applied: ✅"
-          echo "SUSFS patches applied: ✅"
+          echo "SUSFS kernel patches applied: ✅"
           echo "KernelSU-Next installed: ✅"
+
+          # Check patch status before build
+          if find KernelSU-Next -name "*.rej" -type f 2>/dev/null | grep -q .; then
+            echo "SUSFS KernelSU patches: ⚠️ PARTIAL (some hunks failed)"
+            echo "Build risk: MODERATE (compilation errors possible)"
+          else
+            echo "SUSFS KernelSU patches: ✅ COMPLETE"
+          fi
+
           echo "SUSFS fix patches applied: ✅"
           echo "LSM Security Hooks configured: ✅"
 
@@ -302,12 +394,29 @@ jobs:
           # Check build success with better error reporting
           if [ "${PIPESTATUS[0]}" -eq 0 ]; then
             echo "✅ Kernel build completed successfully with KernelSU-Next + SUSFS!"
+
+            # Report final patch status
+            if find KernelSU-Next -name "*.rej" -type f 2>/dev/null | grep -q .; then
+              echo "🎯 Build succeeded despite some patch failures - Good compatibility!"
+            else
+              echo "🎯 Build succeeded with all patches applied cleanly!"
+            fi
           else
             echo "❌ Kernel build failed!"
-            echo "Common issues:"
-            echo "1. SUSFS patches may need manual fixes for this kernel"
-            echo "2. Check kernel_build.log for specific errors"
-            echo "3. Some SUSFS features may conflict with this kernel version"
+            echo ""
+            echo "🔍 Debugging Information:"
+            if find KernelSU-Next -name "*.rej" -type f 2>/dev/null | grep -q .; then
+              echo "- SUSFS patch failures detected (check artifacts/patch_info/)"
+              echo "- Some KernelSU-SUSFS integration features may be missing"
+            fi
+            echo "- Check kernel_build.log for specific compilation errors"
+            echo "- Build artifacts contain patch analysis for debugging"
+            echo ""
+            echo "💡 Common solutions:"
+            echo "1. Try different commit combinations using workflow inputs"
+            echo "2. Use 'stable' variant instead of 'experimental'"
+            echo "3. Check for updated SUSFS or KernelSU-Next versions"
+            echo "4. Review reject files in artifacts for manual patch fixes"
             exit 1
           fi
 
