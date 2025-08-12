@@ -113,9 +113,9 @@ jobs:
           cp -r susfs4ksu/kernel_patches/fs/* fs/
           cp -r susfs4ksu/kernel_patches/include/linux/* include/linux/
 
-          # 3. Apply SUSFS kernel patch (Android 13 version)
+          # 3. Apply SUSFS kernel patch (Android 12 version)
           echo "3. Applying SUSFS kernel patch..."
-          patch --forward -p1 < susfs4ksu/kernel_patches/50_add_susfs_in_gki-android13-5.10.patch
+          patch --forward -p1 < susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch
 
           # 4. Apply SUSFS KernelSU patch
           echo "4. Applying SUSFS KernelSU integration..."
