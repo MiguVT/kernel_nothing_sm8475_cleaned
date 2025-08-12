@@ -71,7 +71,7 @@ jobs:
           remove-cached-tools: 'false'
           verbose: 'true'
       - name: Checkout kernel source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: MiguVT/kernel_nothing_sm8475_github_actions
           ref: clean
