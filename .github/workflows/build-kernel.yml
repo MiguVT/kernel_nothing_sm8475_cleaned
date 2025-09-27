@@ -63,7 +63,7 @@ jobs:
             clang lld llvm git ccache zip unzip curl wget
 
       - name: Setup Android NDK
-        uses: nttld/setup-ndk@afb4c9964b9d58893de48c90ab0892207b10e086
+        uses: nttld/setup-ndk@afb4c9964b521afb97c864b7d40b11e6911bd410
         with:
           ndk-version: r26d
           add-to-path: true
@@ -108,7 +108,7 @@ jobs:
     
     steps:
       - name: Checkout kernel
-        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
         with:
           repository: MiguVT/kernel_nothing_sm8475_github_actions
           ref: clean
@@ -127,7 +127,7 @@ jobs:
           fi
 
       - name: Cache sources
-        uses: actions/cache@0c45773b623bea8c8e75f6c82b208c3cf94ea4f9
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             kernel_patches/
@@ -244,7 +244,7 @@ jobs:
           echo "✅ All patches applied successfully"
 
       - name: Upload prepared sources
-        uses: actions/upload-artifact@50769540e7f4bd5e21e526ee35c689e35e0d6874
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: patched-sources
           path: |
@@ -261,7 +261,7 @@ jobs:
     
     steps:
       - name: Download sources
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: patched-sources
 
@@ -280,7 +280,7 @@ jobs:
           ccache --zero-stats
 
       - name: Cache build
-        uses: actions/cache@0c45773b623bea8c8e75f6c82b208c3cf94ea4f9
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             ~/.ccache
@@ -464,7 +464,7 @@ jobs:
           echo "KERNEL_IMAGE=$(basename "$KERNEL_IMAGE")" >> $GITHUB_ENV
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@50769540e7f4bd5e21e526ee35c689e35e0d6874
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: kernel-build
           path: |
@@ -627,7 +627,7 @@ jobs:
           EOF
 
       - name: Upload package
-        uses: actions/upload-artifact@50769540e7f4bd5e21e526ee35c689e35e0d6874
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: kernel-package
           path: |
@@ -646,12 +646,12 @@ jobs:
     
     steps:
       - name: Download package
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: kernel-package
 
       - name: Create release
-        uses: softprops/action-gh-release@c062e08bd532815e2082a85e87e3ef29c3e6d191
+        uses: softprops/action-gh-release@6cbd405e2c4e67a21c47fa9e383d020e4e28b836
         with:
           tag_name: v${{ github.run_number }}-ksu${{ needs.setup.outputs.ksu-version }}
           name: "KernelSU-Next v${{ needs.setup.outputs.ksu-version }} + SUSFS"
