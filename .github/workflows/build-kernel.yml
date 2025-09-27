@@ -140,12 +140,11 @@ jobs:
 
           # Download and verify KernelSU-Next setup
           echo "Setting up KernelSU-Next..."
-          curl -fsSL "$KERNELSU_SETUP_URL" -o setup.sh
-          if [ $(wc -l < setup.sh) -lt 10 ]; then
+          curl -fsSL "$KERNELSU_SETUP_URL" -o setup_ksu_next.sh
+          if [ $(wc -l < setup_ksu_next.sh) -lt 10 ]; then
             echo "Setup script validation failed"
             exit 1
           fi
-          bash setup.sh
 
       - name: Verify required files
         run: |
