@@ -20,11 +20,11 @@ on:
       wildkernels_commit:
         description: 'WildKernels commit'
         type: string
-        default: 'f2227a36f02adf3776fc9d432734faf04787f3fa'
+        default: 'bf2d9f154a203ce298f96786a624ef635750991b'
       susfs_commit:
         description: 'SUSFS commit'
         type: string
-        default: 'de5c7900234a1e344b20eda58ed51e74e382ec12'
+        default: '0ed20c1656af7806a1760837ad320e62a8fb40fd'
 
 env:
   CCACHE_MAXSIZE: 2G
