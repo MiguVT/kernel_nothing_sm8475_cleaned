@@ -17,20 +17,21 @@ on:
         default: false
         type: boolean
       variant:
-        description: 'Build variant'
+        description: 'Release variant (what to include in release)'
         required: false
-        default: 'experimental'
+        default: 'both'
         type: choice
         options:
           - stable
           - experimental
+          - both
       wildkernels_commit:
-        description: 'WildKernels commit hash'
+        description: 'WildKernels commit hash (for stable builds)'
         required: false
         default: 'f2227a36f02adf3776fc9d432734faf04787f3fa'
         type: string
       susfs_commit:
-        description: 'SUSFS commit hash'
+        description: 'SUSFS commit hash (for stable builds)'
         required: false
         default: 'b994a76465d39e38ac16a39e51aa07ef01ec6abc'
         type: string
@@ -44,15 +45,15 @@ jobs:
       CCACHE_NOHASHDIR: 'true'
       CCACHE_HARDLINK: 'true'
       CCACHE_MAXSIZE: '2G'
-      DEFAULT_WILDKERNELS_COMMIT: 'f2227a36f02adf3776fc9d432734faf04787f3fa'
-      DEFAULT_SUSFS_COMMIT: 'b994a76465d39e38ac16a39e51aa07ef01ec6abc'
+      DEFAULT_WILDKERNELS_COMMIT: 'bf2d9f154a203ce298f96786a624ef635750991b'
+      DEFAULT_SUSFS_COMMIT: '0ed20c1656af7806a1760837ad320e62a8fb40fd'
     strategy:
       matrix:
-        variant: [experimental]
+        variant: [experimental, stable]
         include:
-          #- variant: stable
-          #  wildkernels_commit_override: 'f2227a36f02adf3776fc9d432734faf04787f3fa'
-          #  susfs_commit_override: 'b994a76465d39e38ac16a39e51aa07ef01ec6abc'
+          - variant: stable
+            wildkernels_commit_override: 'bf2d9f154a203ce298f96786a624ef635750991b'
+            susfs_commit_override: '0ed20c1656af7806a1760837ad320e62a8fb40fd'
           - variant: experimental
             wildkernels_commit_override: 'latest'
             susfs_commit_override: 'latest'
@@ -128,17 +129,17 @@ jobs:
         run: |
           set -euo pipefail
           # Use dynamic commit hashes with variant-specific logic
-          if [ "${{ github.event.inputs.variant || matrix.variant }}" = "experimental" ]; then
-            # For experimental builds, use latest commits unless user specifies otherwise
+          if [ "${{ matrix.variant }}" = "experimental" ]; then
+            # For experimental builds, use latest commits
             WILDKERNELS_COMMIT="latest"
             SUSFS_COMMIT="latest"
           else
-            # For stable builds, use proven stable commits unless user specifies otherwise
+            # For stable builds, use user input commit hashes if provided, otherwise use defaults
             WILDKERNELS_COMMIT="${{ github.event.inputs.wildkernels_commit || env.DEFAULT_WILDKERNELS_COMMIT }}"
             SUSFS_COMMIT="${{ github.event.inputs.susfs_commit || env.DEFAULT_SUSFS_COMMIT }}"
           fi
 
-          echo "Build Variant: ${{ github.event.inputs.variant || matrix.variant }}"
+          echo "Build Variant: ${{ matrix.variant }}"
           echo "Using WildKernels commit: $WILDKERNELS_COMMIT"
           echo "Using SUSFS commit: $SUSFS_COMMIT"
 
@@ -199,7 +200,7 @@ jobs:
           set -euo pipefail
 
           echo "=== Installing KernelSU-Next ==="
-          if [ "${{ github.event.inputs.variant || matrix.variant }}" = "experimental" ]; then
+          if [ "${{ matrix.variant }}" = "experimental" ]; then
             curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
           else
             curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
@@ -255,20 +256,8 @@ jobs:
           cp ../kernel_patches/next/susfs_fix_patches/v1.5.9/fix_core_hook.c.patch ./
           patch -p1 --forward --fuzz=3 < fix_core_hook.c.patch
 
-          cp ../kernel_patches/next/susfs_fix_patches/v1.5.9/fix_selinux.c.patch ./
-          patch -p1 --forward < fix_selinux.c.patch
-
-          cp ../kernel_patches/next/susfs_fix_patches/v1.5.9/fix_ksud.c.patch ./
-          patch -p1 --forward < fix_ksud.c.patch
-
-          cp ../kernel_patches/next/susfs_fix_patches/v1.5.9/fix_rules.c.patch ./
-          patch -p1 --forward < fix_rules.c.patch
-
           cp ../kernel_patches/next/susfs_fix_patches/v1.5.9/fix_sucompat.c.patch ./
           patch -p1 --forward < fix_sucompat.c.patch
-
-          cp ../kernel_patches/next/susfs_fix_patches/v1.5.9/fix_kernel_compat.c.patch ./
-          patch -p1 --forward < fix_kernel_compat.c.patch
 
           cd ..
 
@@ -356,10 +345,10 @@ jobs:
 
           # Save configuration info
           {
-            echo "=== KernelSU-Next + SUSFS Configuration (${{ github.event.inputs.variant || matrix.variant }}) ==="
-            echo "Build Variant: ${{ github.event.inputs.variant || matrix.variant }}"
+            echo "=== KernelSU-Next + SUSFS Configuration (${{ matrix.variant }}) ==="
+            echo "Build Variant: ${{ matrix.variant }}"
             echo "KernelSU-Next: https://github.com/KernelSU-Next/KernelSU-Next"
-            if [ "${{ github.event.inputs.variant || matrix.variant }}" = "experimental" ]; then
+            if [ "${{ matrix.variant }}" = "experimental" ]; then
               echo "WildKernels patches: latest commit ($(cd kernel_patches && git rev-parse HEAD))"
               echo "SUSFS: latest commit ($(cd susfs4ksu && git rev-parse HEAD))"
               echo "Build Type: EXPERIMENTAL - Latest commits for cutting-edge features"
@@ -387,7 +376,7 @@ jobs:
           perl -pi -e 's/-maybe-dirty//g' ./scripts/setlocalversion
 
           # Set custom kernel version with KernelSU-Next + SUSFS info
-          perl -0777 -pi -e 's/(.*)(echo "\$res")/$1echo "\$res-Next-v$ENV{KSUVER}-SUSFS-v1.5.9-${{ github.event.inputs.variant || matrix.variant }}"/s' ./scripts/setlocalversion
+          perl -0777 -pi -e 's/(.*)(echo "\$res")/$1echo "\$res-Next-v$ENV{KSUVER}-SUSFS-v1.5.9-${{ matrix.variant }}"/s' ./scripts/setlocalversion
 
           # Set consistent build timestamp
           perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT $(date)"}' ./scripts/mkcompile_h
@@ -400,24 +389,6 @@ jobs:
           # Remove for better module compatibility
           rm -f android/abi_gki_protected_exports_aarch64 || true
           rm -f android/abi_gki_protected_exports_x86_64 || true
-
-      #      - name: Apply compilation fixes
-      #        run: |
-      #          echo "=== Applying known compilation fixes ==="
-      #
-      #          #
-      #          # If there is no known issues or old issues will be fixed, it will be commented like documentation of old issues because maybe it appear again :) just to make sure
-      #          #
-      #
-      #          # Fix for ksu_devpts_hook compilation error (Issue #426)
-      #          if [ -f "KernelSU-Next/kernel/sucompat.c" ]; then
-      #            # Check if fix is needed
-      #            if ! grep -q "bool ksu_devpts_hook" KernelSU-Next/kernel/sucompat.c; then
-      #              echo "Applying ksu_devpts_hook fix..."
-      #              # Add the missing declaration
-      #              sed -i '/^#ifdef CONFIG_KSU_SUSFS_SUS_SU/i bool ksu_devpts_hook = false;' KernelSU-Next/kernel/sucompat.c
-      #            fi
-      #          fi
 
       - name: Build kernel with Clang (Modern toolchain + ccache)
         run: |
@@ -433,7 +404,7 @@ jobs:
           export LLVM_IAS=1
 
           echo "=== Starting kernel build with configuration ==="
-          echo "Build Variant: ${{ github.event.inputs.variant || matrix.variant }} ✅"
+          echo "Build Variant: ${{ matrix.variant }} ✅"
           echo "WildKernels patches applied: ✅"
           echo "SUSFS kernel patches applied: ✅"
           echo "KernelSU-Next installed: ✅ (version $KSUVER)"
@@ -511,7 +482,7 @@ jobs:
           ANYKERNEL3_DIR="anykernel"
           # Use the GitHub run number for versioning to match release tag (e.g., v42)
           VERSION="v${{ github.run_number }}"
-          VARIANT="${{ github.event.inputs.variant || matrix.variant }}"
+          VARIANT="${{ matrix.variant }}"
           ZIPNAME="Meteoric-KernelSU-Next-v$KSUVER-SUSFS-v1.5.9-$VARIANT"
           CLEANUP=true
           echo "📋 Variables configured:"
@@ -667,7 +638,7 @@ jobs:
             echo "Build Date: $(date)"
             echo "Kernel Source: MiguVT/kernel_nothing_sm8475_github_actions (clean branch)"
             echo "KernelSU-Next: https://github.com/KernelSU-Next/KernelSU-Next (version $KSUVER)"
-            VARIANT="${{ github.event.inputs.variant || matrix.variant }}"
+            VARIANT="${{ matrix.variant }}"
             if [ "$VARIANT" = "experimental" ]; then
               echo "WildKernels patches: latest commit (experimental)"
               echo "SUSFS: latest commit (experimental)"
@@ -717,11 +688,11 @@ jobs:
           retention-days: 30
 
       - name: Create Release Draft
-        if: github.event.inputs.create_release == 'true'
+        if: github.event.inputs.create_release == 'true' && (github.event.inputs.variant == 'both' || github.event.inputs.variant == matrix.variant)
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ github.run_number }}-${{ github.event.inputs.variant || matrix.variant }}-ksu${{ env.KSUVER }}
-          name: KernelSU-Next v${{ env.KSUVER }} + SUSFS Build ${{ github.run_number }} (${{ github.event.inputs.variant || matrix.variant }})
+          tag_name: v${{ github.run_number }}-${{ matrix.variant }}-ksu${{ env.KSUVER }}
+          name: KernelSU-Next v${{ env.KSUVER }} + SUSFS Build ${{ github.run_number }} (${{ matrix.variant }})
           draft: true
           prerelease: false
           files: artifacts/*
@@ -731,9 +702,9 @@ jobs:
             ### 📋 Build Information
             - **Kernel Source**: MiguVT/kernel_nothing_sm8475_github_actions (clean branch)
             - **KernelSU-Next**: https://github.com/KernelSU-Next/KernelSU-Next (version ${{ env.KSUVER }})
-            - **Build Variant**: ${{ github.event.inputs.variant || matrix.variant }}
-            - **WildKernels patches**: ${{ (github.event.inputs.variant || matrix.variant) == 'experimental' && 'latest commit (experimental)' || format('commit {0} (stable)', github.event.inputs.wildkernels_commit || env.DEFAULT_WILDKERNELS_COMMIT) }}
-            - **SUSFS**: ${{ (github.event.inputs.variant || matrix.variant) == 'experimental' && 'latest commit (experimental)' || format('commit {0} (stable)', github.event.inputs.susfs_commit || env.DEFAULT_SUSFS_COMMIT) }}
+            - **Build Variant**: ${{ matrix.variant }}
+            - **WildKernels patches**: ${{ matrix.variant == 'experimental' && 'latest commit (experimental)' || format('commit {0} (stable)', github.event.inputs.wildkernels_commit || env.DEFAULT_WILDKERNELS_COMMIT) }}
+            - **SUSFS**: ${{ matrix.variant == 'experimental' && 'latest commit (experimental)' || format('commit {0} (stable)', github.event.inputs.susfs_commit || env.DEFAULT_SUSFS_COMMIT) }}
             - **Configuration**: vendor/meteoric_defconfig
             - **Compiler**: Clang with LLVM + ccache optimization
             - **Architecture**: ARM64
@@ -808,7 +779,7 @@ jobs:
             - **💾 BACKUP REQUIRED**: Always backup boot image before flashing
             - **🔓 BOOTLOADER**: Requires unlocked bootloader
             - **📱 COMPATIBILITY**: Designed for Nothing Phone 2 (SM8475)
-            - **🧪 BUILD VARIANT**: ${{ (github.event.inputs.variant || matrix.variant) == 'experimental' && 'EXPERIMENTAL - Latest commits with newest features but potentially unstable' || 'STABLE - Proven stable commits for reliability' }}
+            - **🧪 BUILD VARIANT**: ${{ matrix.variant == 'experimental' && 'EXPERIMENTAL - Latest commits with newest features but potentially unstable' || 'STABLE - Proven stable commits for reliability' }}
             - **📖 DOCUMENTATION**: This build follows ALL documented procedures correctly
             - **🏗️ ENHANCED**: This version includes significant build optimizations and improvements
         env:
