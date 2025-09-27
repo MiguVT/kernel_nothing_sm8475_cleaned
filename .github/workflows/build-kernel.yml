@@ -107,18 +107,6 @@ jobs:
             exit 1
           fi
 
-      - name: Cache sources
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: |
-            kernel_patches/
-            susfs4ksu/
-            KernelSU-Next/
-          key: sources-${{ needs.setup.outputs.wildkernels-commit }}-${{ needs.setup.outputs.susfs-commit }}
-          restore-keys: |
-            sources-${{ needs.setup.outputs.wildkernels-commit }}-
-            sources-
-
       - name: Clone dependencies
         run: |
           set -euo pipefail
@@ -287,17 +275,6 @@ jobs:
           # Setup scripts
           find scripts/ -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
 
-      - name: Cache build
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: |
-            ~/.ccache
-            out/
-          key: build-${{ runner.os }}-${{ hashFiles('**/Makefile', 'arch/arm64/configs/**') }}-${{ needs.setup.outputs.wildkernels-commit }}-${{ needs.setup.outputs.susfs-commit }}
-          restore-keys: |
-            build-${{ runner.os }}-${{ hashFiles('**/Makefile', 'arch/arm64/configs/**') }}-
-            build-${{ runner.os }}-
-
       - name: Configure kernel
         run: |
           set -euo pipefail
@@ -383,7 +360,7 @@ jobs:
           perl -pi -e 's/-maybe-dirty//g' scripts/setlocalversion
 
           # Set custom version with KernelSU and SUSFS info
-          VERSION_STRING="Next-v${{ needs.setup.outputs.ksu-version }}-SUSFS-${{ needs.setup.outputs.build-date }}"
+          VERSION_STRING="Next-v${{ needs.prepare-sources.outputs.ksu-version }}-SUSFS-${{ needs.setup.outputs.build-date }}"
           perl -0777 -pi -e "s/(.*)(echo \"\\$res\")/\$1echo \"\\$res-$VERSION_STRING\"/s" scripts/setlocalversion
 
           echo "✅ Kernel version updated: $VERSION_STRING"
@@ -415,7 +392,7 @@ jobs:
 
           echo "Starting kernel build with $JOBS parallel jobs..."
           echo "Build configuration:"
-          echo "  ✅ KernelSU-Next v${{ needs.setup.outputs.ksu-version }}"
+          echo "  ✅ KernelSU-Next v${{ needs.prepare-sources.outputs.ksu-version }}"
           echo "  ✅ SUSFS integration enabled"
           echo "  ✅ LSM Security Hooks"
           echo "  ✅ Performance optimizations"
@@ -571,7 +548,7 @@ jobs:
           [ -f "dtb" ] && cp dtb anykernel/ && echo "Copied dtb"
 
           # Create package name
-          PACKAGE_NAME="Meteoric-KernelSU-Next-v${{ needs.setup.outputs.ksu-version }}-SUSFS-${{ needs.setup.outputs.build-date }}.zip"
+          PACKAGE_NAME="Meteoric-KernelSU-Next-v${{ needs.prepare-sources.outputs.ksu-version }}-SUSFS-${{ needs.setup.outputs.build-date }}.zip"
 
           # Create zip package
           cd anykernel
@@ -611,7 +588,7 @@ jobs:
 
           Package Name: $PACKAGE_NAME
           Build Date: ${{ needs.setup.outputs.build-date }}
-          KernelSU Version: ${{ needs.setup.outputs.ksu-version }}
+          KernelSU Version: ${{ needs.prepare-sources.outputs.ksu-version }}
           Package Size: $PACKAGE_SIZE bytes
           SHA256: $SHA256
 
@@ -661,8 +638,8 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@6cbd405e2c4e67a21c47fa9e383d020e4e28b836
         with:
-          tag_name: v${{ github.run_number }}-ksu${{ needs.setup.outputs.ksu-version }}
-          name: 'KernelSU-Next v${{ needs.setup.outputs.ksu-version }} + SUSFS'
+          tag_name: v${{ github.run_number }}-ksu${{ needs.prepare-sources.outputs.ksu-version }}
+          name: 'KernelSU-Next v${{ needs.prepare-sources.outputs.ksu-version }} + SUSFS'
           draft: true
           make_latest: false
           files: |
@@ -672,7 +649,7 @@ jobs:
             ## 🚀 KernelSU-Next + SUSFS Build
 
             ### ✨ Features
-            - **KernelSU-Next v${{ needs.setup.outputs.ksu-version }}** with LSM Security Hooks
+            - **KernelSU-Next v${{ needs.prepare-sources.outputs.ksu-version }}** with LSM Security Hooks
             - **SUSFS integration** for maximum root hiding capabilities
             - **Performance optimizations** including BBR TCP congestion control
             - **Nothing Phone 2 specific optimizations** for better compatibility
