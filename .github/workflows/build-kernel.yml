@@ -20,7 +20,7 @@ on:
       wildkernels_commit:
         description: 'WildKernels commit'
         type: string
-        default: 'bf2d9f154a203ce298f96786a624ef635750991b'
+        default: '5d39f3bf0ed9c950223d6db6b45c861fe3c5a635'
       susfs_commit:
         description: 'SUSFS commit'
         type: string
@@ -28,7 +28,7 @@ on:
 
 env:
   CCACHE_MAXSIZE: 2G
-  DEFAULT_WILDKERNELS: bf2d9f154a203ce298f96786a624ef635750991b
+  DEFAULT_WILDKERNELS: 5d39f3bf0ed9c950223d6db6b45c861fe3c5a635
   DEFAULT_SUSFS: 0ed20c1656af7806a1760837ad320e62a8fb40fd
   KERNELSU_SETUP_URL: https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh
 
@@ -43,16 +43,17 @@ jobs:
       build-date: ${{ steps.date.outputs.date }}
 
     steps:
-      - name: Maximize build space
-        uses: AdityaGarg8/remove-unwanted-software@90e01b21170618765a73370fcc3abbd1684a7793
-        with:
-          remove-dotnet: true
-          remove-android: true
-          remove-haskell: true
-          remove-codeql: true
-          remove-docker-images: true
-          remove-large-packages: true
-          remove-swapfile: true
+      # --- ONLY ENABLE IF RUNNING OUT OF SPACE ---
+      # - name: Maximize build space
+      #   uses: AdityaGarg8/remove-unwanted-software@90e01b21170618765a73370fcc3abbd1684a7793
+      #   with:
+      #     remove-dotnet: true
+      #     remove-android: true
+      #     remove-haskell: true
+      #     remove-codeql: true
+      #     remove-docker-images: true
+      #     remove-large-packages: true
+      #     remove-swapfile: true
 
       - name: Setup build dependencies
         run: |
