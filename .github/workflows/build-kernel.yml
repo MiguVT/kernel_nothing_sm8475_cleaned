@@ -40,7 +40,6 @@ jobs:
     outputs:
       wildkernels-commit: ${{ steps.commits.outputs.wildkernels }}
       susfs-commit: ${{ steps.commits.outputs.susfs }}
-      ksu-version: ${{ steps.version.outputs.version }}
       build-date: ${{ steps.date.outputs.date }}
 
     steps:
@@ -84,6 +83,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     needs: setup
+    outputs:
+      ksu-version: ${{ steps.version.outputs.version }}
 
     steps:
       - name: Checkout kernel
