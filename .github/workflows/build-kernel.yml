@@ -83,22 +83,13 @@ jobs:
         id: version
         run: |
           # Download setup script securely
-          curl -fsSL "$KERNELSU_SETUP_URL" -o setup.sh
+          curl -fsSL "$KERNELSU_SETUP_URL" -o setup_ksu_next.sh
           
           # Verify script is reasonable (basic check)
-          if [ $(wc -l < setup.sh) -lt 10 ]; then
+          if [ $(wc -l < setup_ksu_next.sh) -lt 10 ]; then
             echo "Setup script too short, possible security issue"
             exit 1
           fi
-          
-          # Execute setup
-          bash setup.sh
-          
-          # Get version
-          cd KernelSU-Next/kernel
-          VERSION=$(expr $(git rev-list --count HEAD) + 10200 || echo "10200")
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "KernelSU-Next version: $VERSION"
 
   prepare-sources:
     name: Prepare Source Code
@@ -195,8 +186,35 @@ jobs:
             echo "❌ Missing: SUSFS fix patches directory"
             exit 1
           fi
+
+          if [ ! -f "setup_ksu_next.sh" ]; then
+            echo "❌ Missing: KernelSU-Next setup script"
+            exit 1
+          fi
           
           echo "✅ All required files verified"
+
+      - name: Apply KSU-Next
+        run: |
+          set -euo pipefail
+          
+          echo "Applying KernelSU-Next setup..."
+          bash setup_ksu_next.sh
+          if [ $? -ne 0 ]; then
+            echo "❌ KernelSU-Next setup failed"
+            exit 1
+          fi
+          echo "✅ KernelSU-Next setup applied successfully"
+
+      - name: Set KSU-Next ver.
+        run: |
+          set -euo pipefail
+          
+          cd KernelSU-Next/kernel
+          VERSION=$(expr $(git rev-list --count HEAD) + 10200 || echo "10200")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "KernelSU-Next version: $VERSION"
+          cd ../..
 
       - name: Apply patches
         run: |
