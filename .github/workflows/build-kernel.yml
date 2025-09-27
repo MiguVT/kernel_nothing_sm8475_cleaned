@@ -146,18 +146,6 @@ jobs:
           fi
           bash setup.sh
 
-      - name: Setup KernelSU-Next
-        id: version
-        run: |
-          # Download setup script securely
-          curl -fsSL "$KERNELSU_SETUP_URL" -o setup_ksu_next.sh
-
-          # Verify script is reasonable (basic check)
-          if [ $(wc -l < setup_ksu_next.sh) -lt 10 ]; then
-            echo "Setup script too short, possible security issue"
-            exit 1
-          fi
-
       - name: Verify required files
         run: |
           set -euo pipefail
@@ -207,6 +195,7 @@ jobs:
           echo "✅ KernelSU-Next setup applied successfully"
 
       - name: Set KSU-Next ver.
+        id: version
         run: |
           set -euo pipefail
 
