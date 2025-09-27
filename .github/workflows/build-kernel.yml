@@ -33,7 +33,7 @@ on:
       susfs_commit:
         description: 'SUSFS commit hash (for stable builds)'
         required: false
-        default: 'b994a76465d39e38ac16a39e51aa07ef01ec6abc'
+        default: 'de5c7900234a1e344b20eda58ed51e74e382ec12'
         type: string
 
 jobs:
@@ -255,6 +255,10 @@ jobs:
 
           cp ../kernel_patches/next/susfs_fix_patches/v1.5.9/fix_core_hook.c.patch ./
           patch -p1 --forward --fuzz=3 < fix_core_hook.c.patch
+
+          cp ../kernel_patches/next/susfs_fix_patches/v1.5.9/fix_kernel_compat.c.patch ./
+          patch -p1 --forward --fuzz=3 < fix_kernel_compat.c.patch
+
 
           cp ../kernel_patches/next/susfs_fix_patches/v1.5.9/fix_sucompat.c.patch ./
           patch -p1 --forward < fix_sucompat.c.patch
