@@ -1,0 +1,39 @@
+# Build outputs and temporary files
+out/
+build.log
+*.zip
+*.o
+*.a
+*.so
+*.ko
+
+# Dependencies 
+kernel_patches/
+susfs4ksu/
+KernelSU-Next/
+anykernel/
+setup_ksu_next.sh
+
+# Package files
+package_info.txt
+
+# Temporary files
+/tmp/
+*.tmp
+*.temp
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

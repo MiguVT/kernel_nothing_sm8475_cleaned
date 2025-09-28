@@ -79,10 +79,10 @@ jobs:
         run: |
           echo "date=$(date +%y%m%d-%H%M)" >> $GITHUB_OUTPUT
 
-  prepare-sources:
-    name: Prepare Source Code
+  build:
+    name: Build Kernel
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 90
     needs: setup
     outputs:
       ksu-version: ${{ steps.version.outputs.version }}
@@ -106,6 +106,20 @@ jobs:
             echo "Invalid SUSFS commit hash format"
             exit 1
           fi
+
+      - name: Setup build environment
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc bison flex libssl-dev libelf-dev \
+            clang lld llvm ccache gcc-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabi pahole python3-dev zip unzip curl wget
+
+          # Setup ccache
+          ccache --set-config=max_size=$CCACHE_MAXSIZE
+          ccache --set-config=compression=true
+          ccache --set-config=hash_dir=false
+          ccache --zero-stats
 
       - name: Clone dependencies
         run: |
@@ -236,44 +250,10 @@ jobs:
 
           echo "✅ All patches applied successfully"
 
-      - name: Upload prepared sources
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: patched-sources
-          path: |
-            ./*
-            !.git/
-          retention-days: 1
-          compression-level: 1
-
-  build:
-    name: Build Kernel
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    needs: [setup, prepare-sources]
-
-    steps:
-      - name: Download sources
-        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
-        with:
-          name: patched-sources
-
-      - name: Setup build environment
+      - name: Fix script permissions
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            build-essential bc bison flex libssl-dev libelf-dev \
-            clang lld llvm ccache gcc-aarch64-linux-gnu \
-            gcc-arm-linux-gnueabi pahole python3-dev
-
-          # Setup ccache
-          ccache --set-config=max_size=$CCACHE_MAXSIZE
-          ccache --set-config=compression=true
-          ccache --set-config=hash_dir=false
-          ccache --zero-stats
-
-          # Setup scripts
-          find scripts/ -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
+          # Fix all shell script permissions
+          find . -type f -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
 
       - name: Configure kernel
         run: |
@@ -332,6 +312,9 @@ jobs:
           CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y
           CONFIG_SCHED_WALT=y
           CONFIG_ARM64_DMA_USE_IOMMU=y
+
+          # VDSO Configuration (fixes vdso_offset_sigtramp error)
+          CONFIG_ARM64_VDSO=y
           EOF
 
           # Apply configuration
@@ -349,6 +332,11 @@ jobs:
             exit 1
           fi
 
+          if ! grep -q "CONFIG_ARM64_VDSO=y" out/.config; then
+            echo "❌ ARM64_VDSO not enabled in config"
+            exit 1
+          fi
+
           echo "✅ Kernel configuration completed"
 
       - name: Update kernel version
@@ -359,8 +347,8 @@ jobs:
           perl -pi -e 's/-dirty//g' scripts/setlocalversion
           perl -pi -e 's/-maybe-dirty//g' scripts/setlocalversion
 
-          # Simple and reliable approach: Append to LOCALVERSION
-          VERSION_STRING="Next-v${{ needs.prepare-sources.outputs.ksu-version }}-SUSFS-${{ needs.setup.outputs.build-date }}"
+          # Use CONFIG_LOCALVERSION for version suffix
+          VERSION_STRING="Next-v${{ steps.version.outputs.version }}-SUSFS-${{ needs.setup.outputs.build-date }}"
           echo "CONFIG_LOCALVERSION=\"-$VERSION_STRING\"" >> out/.config
 
           echo "✅ Kernel version updated: $VERSION_STRING"
@@ -392,17 +380,18 @@ jobs:
 
           echo "Starting kernel build with $JOBS parallel jobs..."
           echo "Build configuration:"
-          echo "  ✅ KernelSU-Next v${{ needs.prepare-sources.outputs.ksu-version }}"
+          echo "  ✅ KernelSU-Next v${{ steps.version.outputs.version }}"
           echo "  ✅ SUSFS integration enabled"
           echo "  ✅ LSM Security Hooks"
           echo "  ✅ Performance optimizations"
+          echo "  ✅ ARM64_VDSO enabled"
           echo "  ✅ Ccache enabled"
 
           # Show initial ccache stats
           ccache --show-stats
 
           # Build with timeout
-          timeout 50m make O=out ARCH=arm64 CC="ccache clang" LLVM=1 LLVM_IAS=1 -j$JOBS 2>&1 | tee build.log
+          timeout 75m make O=out ARCH=arm64 CC="ccache clang" LLVM=1 LLVM_IAS=1 -j$JOBS 2>&1 | tee build.log
 
           # Check build result
           if [ "${PIPESTATUS[0]}" -eq 0 ]; then
@@ -445,31 +434,8 @@ jobs:
           echo "✅ Build validation passed"
           echo "Kernel image: $(basename "$KERNEL_IMAGE") ($IMAGE_SIZE bytes)"
 
-          # Save image path for next job
+          # Save image path for packaging
           echo "KERNEL_IMAGE=$(basename "$KERNEL_IMAGE")" >> $GITHUB_ENV
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: kernel-build
-          path: |
-            out/arch/arm64/boot/Image*
-            out/arch/arm64/boot/dtb*
-            out/.config
-            build.log
-          retention-days: 30
-
-  package:
-    name: Package Kernel
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    needs: [setup, build]
-
-    steps:
-      - name: Download build
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
-        with:
-          name: kernel-build
 
       - name: Setup AnyKernel3
         run: |
@@ -523,6 +489,7 @@ jobs:
           write_boot;
           ## end install
           EOF
+          cd ..
 
       - name: Create package
         run: |
@@ -531,10 +498,10 @@ jobs:
           echo "Creating flashable package..."
 
           # Find kernel image
-          IMAGE=$(find . -name "Image*" -type f | head -1)
+          IMAGE=$(find out/arch/arm64/boot/ -name "Image*" -type f | head -1)
           if [ -z "$IMAGE" ]; then
             echo "❌ No kernel image found!"
-            ls -la . || true
+            ls -la out/arch/arm64/boot/ || true
             exit 1
           fi
 
@@ -544,11 +511,11 @@ jobs:
           cp "$IMAGE" anykernel/
 
           # Copy DTB/DTBO if available
-          [ -f "dtbo.img" ] && cp dtbo.img anykernel/ && echo "Copied dtbo.img"
-          [ -f "dtb" ] && cp dtb anykernel/ && echo "Copied dtb"
+          [ -f "out/arch/arm64/boot/dtbo.img" ] && cp out/arch/arm64/boot/dtbo.img anykernel/ && echo "Copied dtbo.img"
+          [ -f "out/arch/arm64/boot/dtb" ] && cp out/arch/arm64/boot/dtb anykernel/ && echo "Copied dtb"
 
           # Create package name
-          PACKAGE_NAME="Meteoric-KernelSU-Next-v${{ needs.prepare-sources.outputs.ksu-version }}-SUSFS-${{ needs.setup.outputs.build-date }}.zip"
+          PACKAGE_NAME="Meteoric-KernelSU-Next-v${{ steps.version.outputs.version }}-SUSFS-${{ needs.setup.outputs.build-date }}.zip"
 
           # Create zip package
           cd anykernel
@@ -577,7 +544,7 @@ jobs:
           echo "Size: $PACKAGE_SIZE bytes"
           echo "SHA256: $SHA256"
 
-          # Save for next job and create info file
+          # Save for release job
           echo "PACKAGE_NAME=$PACKAGE_NAME" >> $GITHUB_ENV
           echo "PACKAGE_SHA256=$SHA256" >> $GITHUB_ENV
 
@@ -588,7 +555,7 @@ jobs:
 
           Package Name: $PACKAGE_NAME
           Build Date: ${{ needs.setup.outputs.build-date }}
-          KernelSU Version: ${{ needs.prepare-sources.outputs.ksu-version }}
+          KernelSU Version: ${{ steps.version.outputs.version }}
           Package Size: $PACKAGE_SIZE bytes
           SHA256: $SHA256
 
@@ -618,13 +585,15 @@ jobs:
           path: |
             *.zip
             package_info.txt
+            out/.config
+            build.log
           retention-days: 90
 
   release:
     name: Create Release
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    needs: [setup, package]
+    needs: [setup, build]
     if: github.event.inputs.create_release == 'true'
     permissions:
       contents: write
@@ -638,8 +607,8 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@6cbd405e2c4e67a21c47fa9e383d020e4e28b836
         with:
-          tag_name: v${{ github.run_number }}-ksu${{ needs.prepare-sources.outputs.ksu-version }}
-          name: 'KernelSU-Next v${{ needs.prepare-sources.outputs.ksu-version }} + SUSFS'
+          tag_name: v${{ github.run_number }}-ksu${{ needs.build.outputs.ksu-version }}
+          name: 'KernelSU-Next v${{ needs.build.outputs.ksu-version }} + SUSFS'
           draft: true
           make_latest: false
           files: |
@@ -649,7 +618,7 @@ jobs:
             ## 🚀 KernelSU-Next + SUSFS Build
 
             ### ✨ Features
-            - **KernelSU-Next v${{ needs.prepare-sources.outputs.ksu-version }}** with LSM Security Hooks
+            - **KernelSU-Next v${{ needs.build.outputs.ksu-version }}** with LSM Security Hooks
             - **SUSFS integration** for maximum root hiding capabilities
             - **Performance optimizations** including BBR TCP congestion control
             - **Nothing Phone 2 specific optimizations** for better compatibility
