@@ -359,9 +359,9 @@ jobs:
           perl -pi -e 's/-dirty//g' scripts/setlocalversion
           perl -pi -e 's/-maybe-dirty//g' scripts/setlocalversion
 
-          # Set custom version with KernelSU and SUSFS info
+          # Simple and reliable approach: Append to LOCALVERSION
           VERSION_STRING="Next-v${{ needs.prepare-sources.outputs.ksu-version }}-SUSFS-${{ needs.setup.outputs.build-date }}"
-          perl -0777 -pi -e "s/(.*)(echo \"\\$res\")/\$1echo \"\\$res-$VERSION_STRING\"/s" scripts/setlocalversion
+          echo "CONFIG_LOCALVERSION=\"-$VERSION_STRING\"" >> out/.config
 
           echo "✅ Kernel version updated: $VERSION_STRING"
 
