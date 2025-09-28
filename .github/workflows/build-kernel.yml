@@ -62,6 +62,15 @@ jobs:
           ref: clean
           fetch-depth: 1
 
+      - name: Fetch config files from base branch
+        run: |
+          # Fetch the base branch to get config files and anykernel.sh
+          git fetch origin base
+          git checkout origin/base -- configs/ksu-susfs.config anykernel.sh
+
+          echo "✅ Config files fetched from base branch"
+          ls -la configs/ anykernel.sh
+
       - name: Setup build environment
         run: |
           sudo apt-get update -qq
